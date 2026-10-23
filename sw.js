@@ -1,12 +1,18 @@
 /* بوابة ولي الأمر — عامل الخدمة
    الواجهة من الذاكرة أولًا (تفتح بلا إنترنت)، والبيانات من الشبكة أولًا
    (أحدث ما رُفع)، فإن انقطعت الشبكة عُرض آخر ما حُفظ. */
-const V = 'pp-0c18102e03';
-const SHELL = ['./', 'index.html', 'app.css?v=0c18102e03', 'app.js?v=0c18102e03', 'manifest.webmanifest',
+const V = 'pp-6acb964728';
+const SHELL = ['./', 'index.html', 'app.css?v=6acb964728', 'app.js?v=6acb964728', 'manifest.webmanifest',
                'icons/logo.png', 'icons/icon-192.png', 'icons/favicon.png'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  /* لا يحلّ الإصدارُ الجديد محلّ القديم من تلقاء نفسه: ينتظر حتى يضغط
+     وليُّ الأمر «تحديث الآن» في الرسالة التي يعرضها التطبيق */
+  e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)));
+});
+
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'skip') self.skipWaiting();
 });
 
 self.addEventListener('activate', (e) => {

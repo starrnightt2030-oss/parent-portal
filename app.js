@@ -8,7 +8,7 @@
    ============================================================================ */
 'use strict';
 (function () {
-  const BUILD = '0c18102e03';
+  const BUILD = '6acb964728';
   const $ = (s, r = document) => r.querySelector(s);
   const app = $('#app');
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -25,6 +25,56 @@
     set(k, v) { try { sessionStorage.setItem(k, JSON.stringify(v)); } catch (_) {} },
     del(k) { try { sessionStorage.removeItem(k); } catch (_) {} },
   };
+
+  /* ------------------------------------------------ الأصوات
+     نغماتٌ تُولَّد في المتصفح (Web Audio) — بلا ملفّات تُحمَّل.
+     المتصفح لا يسمح بالصوت قبل أوّل لمسة، فما طُلب قبلها يُعزف عندها. */
+  const SND = (() => {
+    let ctx = null, pending = null;
+    const on = () => LS.get('pp.sound', true) !== false;
+    const ac = () => {
+      if (!ctx) { const C = window.AudioContext || window.webkitAudioContext; if (!C) return null; ctx = new C(); }
+      return ctx;
+    };
+    const SEQ = {
+      open:   { n: [523.25, 659.25, 783.99, 1046.5], d: 0.13, g: 0.05, t: 'sine' },
+      data:   { n: [783.99, 1046.5], d: 0.11, g: 0.045, t: 'triangle' },
+      msg:    { n: [880, 1318.5, 880, 1318.5], d: 0.12, g: 0.05, t: 'sine' },
+      update: { n: [659.25, 783.99, 987.77, 1318.5], d: 0.12, g: 0.05, t: 'triangle' },
+      fresh:  { n: [1046.5, 1318.5, 1568], d: 0.1, g: 0.04, t: 'sine' },
+      tap:    { n: [1400], d: 0.035, g: 0.018, t: 'sine' },
+      error:  { n: [392, 261.63], d: 0.18, g: 0.05, t: 'triangle' },
+    };
+    function play(name) {
+      if (!on()) return;
+      const c = ac(); if (!c) return;
+      if (c.state === 'suspended') {
+        pending = name;
+        c.resume().then(() => { if (c.state === 'running' && pending === name) { pending = null; play(name); } }).catch(() => {});
+        return;
+      }
+      const q = SEQ[name]; if (!q) return;
+      const t0 = c.currentTime + 0.02;
+      q.n.forEach((f, i) => {
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = q.t; o.frequency.value = f;
+        const t = t0 + i * q.d;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(q.g, t + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + q.d * 1.8);
+        o.connect(g); g.connect(c.destination);
+        o.start(t); o.stop(t + q.d * 2);
+      });
+    }
+    /* أوّل لمسة تفتح الصوت وتعزف ما كان ينتظر */
+    const unlock = () => {
+      const c = ac(); if (!c) return;
+      c.resume().then(() => { if (pending) { const p = pending; pending = null; play(p); } }).catch(() => {});
+    };
+    document.addEventListener('pointerdown', unlock, { capture: true, passive: true });
+    document.addEventListener('keydown', unlock, { capture: true });
+    return { play, on, set: (v) => LS.set('pp.sound', !!v) };
+  })();
 
   /* ------------------------------------------------ أيقونات */
   const svg = (d, o = {}) => `<svg class="ic" aria-hidden="true" width="${o.s || 22}" height="${o.s || 22}" viewBox="0 0 24 24" fill="none"
@@ -52,6 +102,8 @@
     dl: '<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>',
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
+    bell: '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+    mute: '<path d="M11 5L6 9H2v6h4l5 4z"/><path d="M23 9l-6 6M17 9l6 6"/>',
   };
   const ic = (name, o) => svg(I[name], o);
 
@@ -92,6 +144,7 @@
   async function loadMeta(force) {
     if (S.meta && !force) return S.meta;
     try { S.meta = await getJSON('data/meta.json'); } catch (_) { S.meta = S.meta || null; }
+    checkVersion();
     return S.meta;
   }
   async function loadNews(force) {
@@ -196,6 +249,7 @@
         ${CREDIT}
       </div>
     </section>`;
+    SND.play('open');
     clearTimeout(vSplash.t);
     vSplash.t = setTimeout(() => { if (!route()[0]) { S.splashDone = true; location.replace('#/home'); } }, 3600);
   }
@@ -383,6 +437,7 @@
       SS.set('pp.cur', kid);
       if (rem) saveKid(kid);
       busy = false;
+      S.greet = true;
       go('#/s');
     } catch (e) {
       busy = false;
@@ -390,6 +445,7 @@
         : e.code === 'nometa' || e.code === 503 || navigator.onLine === false ? 'تعذّر الاتصال — تأكّد من اتصالك بالإنترنت ثم حاول مرة أخرى.'
         : e.name === 'OperationError' ? 'تعذّر فتح البيانات — حاول مرة أخرى بعد قليل.'
         : 'حدث خطأ غير متوقّع — حاول مرة أخرى.';
+      SND.play('error');
       vLogin(m);
       const i = $('#nid'); i.value = nid; i.dispatchEvent(new Event('input'));
     }
@@ -398,7 +454,7 @@
   async function openKid(id) {
     const k = kids().find((x) => x.id === id);
     if (!k) return vLogin();
-    S.kid = k; S.data = null; SS.set('pp.cur', k);
+    S.kid = k; S.data = null; S.greet = true; SS.set('pp.cur', k);
     go('#/s');
   }
 
@@ -483,6 +539,7 @@
   }
 
   function vSummary(d, kid) {
+    if (S.greet !== false) { S.greet = false; SND.play(unreadMsgs(d, kid) ? 'msg' : 'data'); }
     const st = ST[d.st] || ST.ok;
     const c = d.c || {};
     let sub = '';
@@ -507,6 +564,17 @@
           <div class="sx"><span class="k">حالة الانتظام</span><span class="v" style="color:${st.ink}">${esc(st.t)}</span>
             <span class="d">${esc(sub)}</span></div>
         </section>
+        ${c.p != null ? (() => {
+          const rec = (c.p || 0) + abs + (c.x || 0) + (c.s || 0) + (c.d || 0) + (c.l || 0);
+          const pct = rec ? Math.round((c.p || 0) / rec * 100) : 0;
+          return `<section class="card presence">
+            <div class="pi">${ic('ok', { s: 28, c: '#0E7A4C', w: 2.2 })}</div>
+            <div class="px"><span class="l">أيام الحضور</span>
+              <span class="n">${c.p || 0} <small>${rec ? `من ${rec} ${rec >= 3 && rec <= 10 ? 'أيام' : 'يومًا'} مسجّلًا` : 'لم يُسجَّل حضورٌ بعد'}</small></span>
+              ${rec ? `<div class="track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%;background:#0E7A4C"></i></div>` : ''}
+            </div>
+            ${rec ? `<b class="pct">${pct}%</b>` : ''}
+          </section>`; })() : ''}
         <section class="stats">
           <button class="stat" data-go="#/s/abs" data-f="a"><span class="n" style="color:#B3192B">${abs}</span><span class="l">أيام الغياب</span>
             <span class="h">${c.e ? `منها ${c.e} هروب` : 'بدون إذن'}</span></button>
@@ -558,7 +626,7 @@
       <main class="list" style="flex:1;padding:14px 16px">
         ${d.st === 'dismissed' ? `<section class="banner red">${ic('ban', { s: 24, c: '#B3192B', w: 2.2 })}<div><b>قرار فصل${d.sd ? ` — ${esc(fDate(d.sd))}` : ''}</b><span>${esc(ruleTxt(d.sr) || 'لتجاوز حدّ الغياب')}</span></div></section>`
           : w ? `<section class="banner">${ic('alert', { s: 24, c: '#9A5B00', w: 2.2 })}<div><b>إنذار غياب — ${esc(fDate(w.d))}</b><span>${esc([w.n ? `${daysAr(w.n)} غياب` : '', ruleTxt(w.r)].filter(Boolean).join(' · '))}</span></div></section>` : ''}
-        ${!list.length ? `<div class="empty"><div class="ei">${ic('ok', { s: 30, c: '#0E7A4C' })}</div>${f === 'all' ? 'لا توجد أيام غياب مسجّلة هذا العام' : 'لا توجد أيام من هذا النوع'}</div>`
+        ${!list.length ? `<div class="empty"><div class="ei">${ic('ok', { s: 30, c: '#0E7A4C' })}</div>${f === 'all' ? (d.c && d.c.p ? `لا توجد أيام غياب هذا العام — حضر ${d.c.p} ${d.c.p >= 3 && d.c.p <= 10 ? 'أيام' : d.c.p === 1 ? 'يومًا واحدًا' : d.c.p === 2 ? 'يومين' : 'يومًا'} من ${d.c.p} مسجّلًا` : 'لا توجد أيام غياب مسجّلة هذا العام') : 'لا توجد أيام من هذا النوع'}</div>`
           : months.map((g) => `<section class="month"><h2>${esc(g.k)}</h2><div class="days">${g.items.map((x) => {
               const p = pd(x[0]); const k = DAY[x[1]] || DAY.a;
               return `<div class="day"><div class="dd"><b>${p.d}</b><span>${esc(g.m)}</span></div><span class="wd">${esc(wday(x[0]))}</span>
@@ -618,6 +686,8 @@
     const n = kids().length;
     sheet(`<h2>الإعدادات</h2>
       ${!standalone() ? `<button class="opt" data-a="install">${ic('dl', { c: '#1E6FD9' })}<span>تثبيت التطبيق<small>أضِفه إلى الشاشة الرئيسية ليفتح كتطبيق</small></span></button>` : ''}
+      <button class="opt" data-a="sound">${ic(SND.on() ? 'bell' : 'mute', { c: '#1E6FD9' })}<span>أصوات التطبيق: ${SND.on() ? 'تعمل' : 'متوقّفة'}<small>نغمة عند الفتح وعرض البيانات ووصول رسالة أو تحديث</small></span></button>
+      <button class="opt" data-a="update">${ic('dl', { c: '#1E6FD9' })}<span>البحث عن تحديث للتطبيق<small>الإصدار الحالي ${esc(BUILD)}</small></span></button>
       <button class="opt" data-a="refresh">${ic('sync', { c: '#1E6FD9' })}<span>تحديث البيانات الآن<small>${S.meta && S.meta.at ? `آخر تحديث: ${esc(fDT(S.meta.at))}` : 'جلب أحدث الأخبار والبيانات'}</small></span></button>
       ${n ? `<button class="opt danger" data-a="forget">${ic('trash', { c: '#B3192B' })}<span>إزالة الطلاب المحفوظين (${n})<small>يُطلب الرقم القومي عند الدخول التالي</small></span></button>` : ''}
       <div class="note" style="margin-top:4px">${ic('info', { s: 20, c: '#1658AE', st: 'margin-top:3px' })}<span>بيانات الطالب تُحدَّث من نظام المركز عند كل مزامنة. لأي استفسار راجع شؤون الطلاب بالمركز.</span></div>
@@ -650,19 +720,25 @@
     if (!t) return;
     if (t.dataset.f) SS.set('pp.absF', t.dataset.f);
     if (t.dataset.go) {
+      if (t.closest('.nav,.seg,.chips')) SND.play('tap');
       if (t.dataset.go === '#/home') S.splashDone = true;
       if (t.dataset.go === '#/s/abs' && !t.dataset.f && route()[1] !== 'abs') SS.set('pp.absF', 'all');
       return go(t.dataset.go);
     }
-    if (t.dataset.nf) { SS.set('pp.newsF', t.dataset.nf); return vNews(); }
-    if (t.dataset.af) { SS.set('pp.absF', t.dataset.af); return vAbsence(S.data, currentKid()); }
+    if (t.dataset.nf) { SND.play('tap'); SS.set('pp.newsF', t.dataset.nf); return vNews(); }
+    if (t.dataset.af) { SND.play('tap'); SS.set('pp.absF', t.dataset.af); return vAbsence(S.data, currentKid()); }
     if (t.dataset.kid) return openKid(t.dataset.kid);
     if (t.dataset.unkid) { dropKid(t.dataset.unkid); toast('أُزيل من هذا الجهاز'); return vLogin(); }
     const a = t.dataset.a;
     if (a === 'settings') return vSettings();
     if (a === 'install') { closeSheet(); return doInstall(); }
     if (a === 'close') return closeSheet();
-    if (a === 'refresh') { closeSheet(); await Promise.all([loadMeta(true), loadNews(true)]); toast('تمّ التحديث'); return render(); }
+    if (a === 'refresh') { closeSheet(); await Promise.all([loadMeta(true), loadNews(true)]); if (S.kid) await ensureData(true).catch(() => {});
+      SND.play('fresh'); toast('تمّ تحديث البيانات'); return render(); }
+    if (a === 'sound') { SND.set(!SND.on()); if (SND.on()) SND.play('data'); return vSettings(); }
+    if (a === 'update') { closeSheet(); return checkUpdateNow(true); }
+    if (a === 'do-update') return applyUpdate();
+    if (a === 'later') { hideUpd(); S.updLater = true; return; }
     if (a === 'forget') { LS.set('pp.kids', []); closeSheet(); toast('أُزيلت البيانات المحفوظة'); return; }
     if (a === 'logout') { SS.del('pp.cur'); S.kid = null; S.data = null; return go('#/login'); }
   });
@@ -676,11 +752,85 @@
     }
   });
 
-  /* عامل الخدمة */
-  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-    let had = !!navigator.serviceWorker.controller;
-    navigator.serviceWorker.addEventListener('controllerchange', () => { if (had) location.reload(); had = true; });
+  /* ============================================================================
+     التحديث — رسالةٌ تطلب من وليّ الأمر تحديث التطبيق حين يُرفع إصدارٌ أحدث
+     ----------------------------------------------------------------------------
+     طريقان يكشفانه: عاملُ الخدمة يجد sw.js جديدًا فينتظر (لا يحلّ وحده)،
+     أو meta.json يحمل رقمَ إصدارٍ غير الذي يعمل الآن.
+     ============================================================================ */
+  let REG = null, reloading = false;
+  const swOK = 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost');
+
+  function showUpd() {
+    if (S.updLater || $('#upd')) return;
+    const el = document.createElement('div');
+    el.id = 'upd'; el.className = 'upd'; el.setAttribute('role', 'alertdialog');
+    el.innerHTML = `<div class="upd-c">
+      <div class="upd-i">${ic('dl', { s: 26, c: '#fff' })}</div>
+      <div class="upd-t"><b>يتوفّر تحديثٌ جديد للتطبيق</b><span>حدِّث الآن لتحصل على أحدث المزايا والبيانات</span></div>
+      <div class="upd-b"><button class="btn" data-a="do-update">تحديث الآن</button><button class="link" data-a="later">لاحقًا</button></div>
+    </div>`;
+    document.body.appendChild(el);
+    SND.play('update');
+  }
+  const hideUpd = () => { const e = $('#upd'); if (e) e.remove(); };
+
+  function checkVersion() {
+    if (!S.meta) return;
+    /* بياناتٌ أحدث من آخر ما رآه هذا الجهاز */
+    const last = LS.get('pp.lastAt', null);
+    if (S.meta.at && last && S.meta.at > last && !S.freshShown) {
+      S.freshShown = true;
+      setTimeout(() => { SND.play('fresh'); toast('وصلت بيانات جديدة من المركز'); }, 900);
+    }
+    if (S.meta.at) LS.set('pp.lastAt', S.meta.at);
+    /* إصدارٌ أحدث من الذي يعمل */
+    if (S.meta.build && BUILD.indexOf('__') !== 0 && S.meta.build !== BUILD) showUpd();
+  }
+
+  async function checkUpdateNow(manual) {
+    try { if (REG) await REG.update(); } catch (_) {}
+    await loadMeta(true);
+    const newer = (REG && REG.waiting) || (S.meta && S.meta.build && S.meta.build !== BUILD);
+    if (REG && REG.waiting) { S.updLater = false; showUpd(); }
+    else if (newer) { S.updLater = false; showUpd(); }
+    else if (manual) { SND.play('data'); toast('التطبيق على أحدث إصدار'); }
+  }
+
+  async function applyUpdate() {
+    const b = $('#upd [data-a="do-update"]');
+    if (b) { b.disabled = true; b.innerHTML = '<span class="spin" aria-hidden="true"></span> جارٍ التحديث…'; }
+    LS.set('pp.justUpdated', true);
+    if (REG && REG.waiting) { REG.waiting.postMessage({ type: 'skip' }); setTimeout(() => location.reload(), 4000); return; }
+    /* لا عاملَ ينتظر (متصفح بلا دعم، أو لم يُكتشف بعد): نُفرغ ذاكرة الواجهة ونعيد التحميل */
+    try { if (REG) await REG.update(); } catch (_) {}
+    if (REG && REG.waiting) { REG.waiting.postMessage({ type: 'skip' }); return; }
+    try { const ks = await caches.keys(); await Promise.all(ks.filter((k) => k.startsWith('pp-') && k !== 'pp-data').map((k) => caches.delete(k))); } catch (_) {}
+    location.reload();
+  }
+
+  if (swOK) {
+    navigator.serviceWorker.register('sw.js').then((reg) => {
+      REG = reg;
+      if (reg.waiting && navigator.serviceWorker.controller) showUpd();
+      reg.addEventListener('updatefound', () => {
+        const w = reg.installing; if (!w) return;
+        w.addEventListener('statechange', () => {
+          if (w.state === 'installed' && navigator.serviceWorker.controller) showUpd();
+        });
+      });
+    }).catch(() => {});
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloading || !LS.get('pp.justUpdated', false)) return;
+      reloading = true; location.reload();
+    });
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkUpdateNow(false).catch(() => {});
+  });
+  if (LS.get('pp.justUpdated', false)) {
+    LS.del('pp.justUpdated');
+    setTimeout(() => { SND.play('update'); toast('تمّ تحديث التطبيق إلى أحدث إصدار'); }, 1200);
   }
 
   if (!window.crypto || !crypto.subtle) {
