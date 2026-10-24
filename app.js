@@ -8,7 +8,7 @@
    ============================================================================ */
 'use strict';
 (function () {
-  const BUILD = '6acb964728';
+  const BUILD = '97d6a9aea0';
   const $ = (s, r = document) => r.querySelector(s);
   const app = $('#app');
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -103,6 +103,7 @@
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     bell: '<path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+    send: '<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/>',
     mute: '<path d="M11 5L6 9H2v6h4l5 4z"/><path d="M23 9l-6 6M17 9l6 6"/>',
   };
   const ic = (name, o) => svg(I[name], o);
@@ -474,6 +475,128 @@
     }
   }
 
+  /* ============================================================================
+     صندوقُ البريد — تواصلُ وليّ الأمر مع الإدارة (Cloudflare)
+     كلُّ ما يُرسل ويُستقبل مشفّرٌ بمفتاح الطالب نفسِه؛ الصندوقُ لا يقرأ شيئًا.
+     ============================================================================ */
+  const MBK = { reply: ['ردّ على رسالة', '↩'], meeting: ['طلب مقابلة', '🤝'], document: ['طلب مستند', '📄'],
+                absence: ['استفسار عن غياب', '📅'], complaint: ['شكوى', '⚠️'], suggestion: ['اقتراح', '💡'], other: ['رسالة', '✉️'] };
+  const MBS = { new: ['تمّ الاستلام', '#215a95', '#E8F1FD'], review: ['قيد المراجعة', '#9A5B00', '#FFF4E0'],
+                answered: ['تمّ الردّ', '#0E7A4C', '#E5F6EE'], closed: ['مغلق', '#39424F', '#EEF2F8'],
+                sending: ['جارٍ الإرسال', '#5B6577', '#EEF2F8'], sent: ['أُرسل', '#215a95', '#E8F1FD'], failed: ['لم يُرسل', '#B3192B', '#FDECEE'] };
+  const mbURL = () => (S.meta && S.meta.mbox) ? String(S.meta.mbox).replace(/\/+$/, '') : null;
+  const mbGet = (kid) => Object.assign({ seq: 0, items: {}, gone: {}, out: [], acked: {} }, LS.get('pp.mb.' + kid.id, {}));
+  const mbPut = (kid, v) => LS.set('pp.mb.' + kid.id, v);
+  const nowLocal = () => { const d = new Date(), z = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`; };
+  const KEYC = {};
+  async function mbKeys(kid) {
+    if (KEYC[kid.id]) return KEYC[kid.id];
+    const raw = b64d(kid.k);
+    const aes = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+    const hk = await crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+    const tok = hex(new Uint8Array(await crypto.subtle.sign('HMAC', hk, new TextEncoder().encode('mbox-v1'))));
+    return (KEYC[kid.id] = { aes, tok });
+  }
+  async function mbReq(kid, method, path, body) {
+    const u = mbURL(); if (!u) throw Object.assign(new Error('nombox'), { code: 'nombox' });
+    const K = await mbKeys(kid);
+    const r = await fetch(u + path, { method, cache: 'no-store',
+      headers: { 'X-Fid': kid.id, 'X-Tok': K.tok, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw Object.assign(new Error(j.error || 'net'), { code: r.status });
+    return j;
+  }
+  /* سحبُ ما أرسلته الإدارة (رسائل · ردود · حالات الطلبات) — يُعيد عددَ الجديد منها */
+  async function mbFetch(kid) {
+    if (!mbURL() || !kid) return { fresh: [] };
+    const st = mbGet(kid), K = await mbKeys(kid);
+    const j = await mbReq(kid, 'GET', '/p/inbox?since=' + (st.seq || 0));
+    const fresh = [];
+    for (const it of j.items || []) {
+      st.seq = Math.max(st.seq || 0, it.seq);
+      if (it.del) { delete st.items[it.id]; st.gone[it.id] = 1; continue; }
+      try {
+        const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64d(it.iv) }, K.aes, b64d(it.ct));
+        const o = JSON.parse(new TextDecoder().decode(pt));
+        const had = st.items[it.id];
+        st.items[it.id] = o; delete st.gone[it.id];
+        if (!had && (o.type === 'post' || o.type === 'msg')) fresh.push(it.id);
+        /* رسالتي وصلت الإدارة: لا حاجة لنسختها المعلّقة */
+        if (o.type === 'mine' && o.lid) st.out = st.out.filter((x) => x.lid !== o.lid);
+        if (o.type === 'ticket') st.out = st.out.filter((x) => !(x.p.type === 'ticket' && x.lid === o.lid && x.state === 'sent'));
+      } catch (_) { /* لا يُفكّ: ليس لهذا الطالب */ }
+    }
+    mbPut(kid, st);
+    return { fresh };
+  }
+  async function mbSend(kid, p) {
+    const st = mbGet(kid);
+    const lid = 'L' + hex(crypto.getRandomValues(new Uint8Array(8)));
+    const o = { lid, p: { v: 1, ...p }, at: nowLocal(), state: 'sending' };
+    st.out.push(o); mbPut(kid, st);
+    await mbPush(kid, o);
+    return lid;
+  }
+  async function mbPush(kid, o) {
+    try {
+      const K = await mbKeys(kid);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, K.aes, new TextEncoder().encode(JSON.stringify(o.p))));
+      await mbReq(kid, 'POST', '/p/send', { lid: o.lid, ct: b64e(ct), iv: b64e(iv) });
+      o.state = 'sent'; o.err = null;
+    } catch (e) { o.state = 'failed'; o.err = e.code === 429 ? 'limit' : 'net'; }
+    const st = mbGet(kid); const i = st.out.findIndex((x) => x.lid === o.lid);
+    if (i >= 0) { st.out[i] = o; mbPut(kid, st); }
+    return o.state === 'sent';
+  }
+  async function mbRetry(kid) {
+    for (const o of mbGet(kid).out.filter((x) => x.state === 'failed' || x.state === 'sending')) await mbPush(kid, o);
+  }
+  /* إيصالاتُ الاستلام (d) والقراءة (r) — مرّةً واحدة لكلّ رسالة */
+  async function mbAck(kid, ids, s) {
+    if (!mbURL() || !kid || !ids.length) return;
+    const st = mbGet(kid);
+    const todo = ids.filter((id) => !st.acked[id + s] && /^[mp]\d+$/.test(id));
+    if (!todo.length) return;
+    try {
+      await mbReq(kid, 'POST', '/p/ack', { items: todo.map((id) => ({ id, s, at: new Date().toISOString() })) });
+      const s2 = mbGet(kid); for (const id of todo) { s2.acked[id + s] = 1; if (s === 'r') s2.acked[id + 'd'] = 1; } mbPut(kid, s2);
+    } catch (_) { /* تُعاد في المرّة القادمة */ }
+  }
+  /* رسائلُ الإدارة: من ملفّ الطالب، ومن الصندوق فورًا — والمحذوفُ لا يظهر */
+  function allMsgs(d, kid) {
+    const st = mbGet(kid), map = new Map();
+    for (const m of d.m || []) if (!st.gone['m' + m.id]) map.set(m.id, { id: m.id, at: m.at, b: m.b });
+    for (const [k, o] of Object.entries(st.items)) if (o.type === 'msg') map.set(o.id, { id: o.id, at: o.at, b: o.b });
+    return [...map.values()].sort((a, b) => String(b.at).localeCompare(String(a.at)) || b.id - a.id);
+  }
+  /* الطلبات ومحادثاتها */
+  function allTickets(kid) {
+    const st = mbGet(kid), T = new Map();
+    const get = (lid) => { if (!T.has(lid)) T.set(lid, { lid, posts: [], status: null, kind: 'other' }); return T.get(lid); };
+    for (const o of Object.values(st.items)) {
+      if (o.type === 'ticket') Object.assign(get(o.lid), { no: o.no, kind: o.kind, status: o.status, at: o.at, up: o.up, seen: o.seen, ref: o.ref });
+      else if (o.type === 'mine') get(o.tl).posts.push({ me: true, lid: o.lid, at: o.at, b: o.b, delivered: true });
+      else if (o.type === 'post') get(o.tl).posts.push({ me: false, id: o.id, at: o.at, b: o.b });
+    }
+    for (const x of st.out) {
+      const tl = x.p.type === 'ticket' ? x.lid : x.p.tl;
+      const t = get(tl);
+      if (x.p.type === 'ticket' && !t.status) Object.assign(t, { kind: x.p.kind, ref: x.p.ref, at: x.at, status: x.state });
+      if (!t.posts.some((p) => p.lid === x.lid)) t.posts.push({ me: true, lid: x.lid, at: x.at, b: x.p.text, state: x.state, err: x.err });
+    }
+    for (const t of T.values()) {
+      t.posts.sort((a, b) => String(a.at).localeCompare(String(b.at)));
+      t.last = t.posts[t.posts.length - 1] || null;
+      t.unread = t.posts.filter((p) => !p.me && !st.acked['p' + p.id + 'r']).length;
+    }
+    return [...T.values()].filter((t) => t.posts.length || t.no)
+      .sort((a, b) => String((b.last && b.last.at) || b.at || '').localeCompare(String((a.last && a.last.at) || a.at || '')));
+  }
+  const mbUnread = (kid) => kid ? allTickets(kid).reduce((n, t) => n + t.unread, 0) : 0;
+
   const ST = {
     ok: { t: 'منتظم', ink: '#0E7A4C', soft: '#E5F6EE', icon: 'ok' },
     warn: { t: 'عليه إنذار غياب', ink: '#9A5B00', soft: '#FFF4E0', icon: 'alert' },
@@ -485,7 +608,7 @@
     x: ['بإذن', '#FFF4E0', '#9A5B00'], s: ['مرضي', '#E8F1FD', '#1658AE'],
     d: ['إيقاف تأديبي', '#E6EAF2', '#0B1F44'], l: ['فترة فصل', '#EEF2F8', '#39424F'],
   };
-  const unreadMsgs = (d, kid) => (d.m || []).filter((m) => m.id > LS.get(`pp.seenMsg.${kid.id}`, 0)).length;
+  const unreadMsgs = (d, kid) => allMsgs(d, kid).filter((m) => m.id > LS.get(`pp.seenMsg.${kid.id}`, 0)).length;
   const ruleTxt = (r) => r === 'متصل' ? 'غياب متصل' : r === 'منفصل' ? 'غياب منفصل' : (r || '');
 
   function stHead(d) {
@@ -509,10 +632,12 @@
     const u = unreadMsgs(d, kid);
     const b = (k, h, icon, l, extra = '') => `<button class="${on === k ? 'on' : ''}" data-go="${h}" ${on === k ? 'aria-current="page"' : ''}>
       ${ic(icon)}${l}${extra}</button>`;
-    return `<nav class="nav" aria-label="أقسام صفحة الطالب">
+    const c = mbUnread(kid);
+    return `<nav class="nav${mbURL() ? ' n4' : ''}" aria-label="أقسام صفحة الطالب">
       ${b('sum', '#/s', 'home', 'الملخّص')}
       ${b('abs', '#/s/abs', 'cal', 'الغياب')}
-      ${b('msg', '#/s/msg', 'chat', 'الرسائل والعقوبات', u ? `<span class="dot">${u}</span>` : '')}
+      ${b('msg', '#/s/msg', 'chat', mbURL() ? 'الرسائل' : 'الرسائل والعقوبات', u ? `<span class="dot">${u}</span>` : '')}
+      ${mbURL() ? b('con', '#/s/c', 'send', 'تواصل', c ? `<span class="dot">${c}</span>` : '') : ''}
     </nav>`;
   }
   const stFoot = () => `<div class="sync" style="padding-top:4px">${ic('sync', { s: 14 })} آخر تحديث: ${esc((S.meta && fDT(S.meta.at)) || '—')}</div>
@@ -531,10 +656,18 @@
       return vLogin(e.code === 404 ? 'لم تعد بيانات هذا الطالب متاحة على البوابة — راجع شؤون الطلاب بالمركز.'
         : 'تعذّر تحميل البيانات — تأكّد من اتصالك بالإنترنت ثم حاول مرة أخرى.');
     }
+    /* الصندوق: الردود والحالات الجديدة — ثمّ إيصالُ «وصل» لكلّ ما ظهر */
+    if (mbURL() && Date.now() - (S.mbAt || 0) > 20000) {
+      S.mbAt = Date.now();
+      try { await mbRetry(kid); await mbFetch(kid); } catch (_) {}
+      mbAck(kid, [...allMsgs(d, kid).map((m) => 'm' + m.id),
+                  ...allTickets(kid).flatMap((t) => t.posts.filter((p) => !p.me).map((p) => 'p' + p.id))], 'd');
+    }
     const r = route();
     if (r[0] !== 's') return;
     if (tab === 'abs') return vAbsence(d, kid);
     if (tab === 'msg' || tab === 'pen') return vNotices(d, kid, tab);
+    if (tab === 'c') return r[2] === 'new' ? vCompose(d, kid) : r[2] ? vThread(d, kid, r[2]) : vContact(d, kid);
     return vSummary(d, kid);
   }
 
@@ -548,7 +681,7 @@
     else if (d.st === 'dismissed') sub = `قرار فصل${d.sd ? ` بتاريخ ${fDate(d.sd)}` : ''} لتجاوز حدّ الغياب — لإعادة القيد راجع شؤون الطلاب`;
     else sub = 'لمعرفة التفاصيل راجع شؤون الطلاب بالمركز';
     const abs = (c.a || 0) + (c.e || 0);
-    const msgs = d.m || [];
+    const msgs = allMsgs(d, kid);
     const u = unreadMsgs(d, kid);
     const bar = (n, lim, warnAt) => {
       const pct = Math.min(100, lim ? Math.round(n / lim * 100) : 0);
@@ -640,7 +773,7 @@
 
   function vNotices(d, kid, tab) {
     const seen = LS.get(`pp.seenMsg.${kid.id}`, 0);
-    const msgs = d.m || [], pens = d.p || [];
+    const msgs = allMsgs(d, kid), pens = d.p || [];
     const isMsg = tab !== 'pen';
     const u = unreadMsgs(d, kid);
     const today = todayStr();
@@ -659,7 +792,8 @@
           : msgs.map((m) => `<article class="msg ${m.id > seen ? 'new' : ''}">
               <div class="mh"><img src="icons/logo.png" alt=""><div><b>إدارة جودة وتكنولوجيا التعليم</b><span>${esc(fDT(m.at))}</span></div>
                 ${m.id > seen ? '<span class="tag-new">جديد</span>' : ''}</div>
-              <p>${esc(m.b)}</p></article>`).join(''))
+              <p>${esc(m.b)}</p>
+              ${mbURL() ? `<div class="mfoot"><button class="rbtn" data-reply="${m.id}">${ic('send', { s: 16 })} ردّ على الرسالة</button></div>` : ''}</article>`).join(''))
         : `<div class="note">${ic('info', { s: 20, c: '#1658AE', st: 'margin-top:3px' })}<span>أيام الإيقاف تُحتسب غيابًا. للاستفسار أو تقديم التماس راجع شؤون الطلاب بالمركز.</span></div>
           ${!pens.length ? `<div class="empty"><div class="ei">${ic('ok', { s: 30, c: '#0E7A4C' })}</div>لا توجد عقوبات مسجّلة</div>`
             : pens.map((p) => {
@@ -678,8 +812,156 @@
     if (isMsg && msgs.length) {
       const max = Math.max(...msgs.map((m) => m.id));
       setTimeout(() => LS.set(`pp.seenMsg.${kid.id}`, Math.max(seen, max)), 1200);
+      /* ظهرت أمامه: إيصالُ «قُرئت» يصل الإدارة */
+      mbAck(kid, msgs.map((m) => 'm' + m.id), 'r');
     }
   }
+
+  /* ------------------------------------------------ تواصل مع الإدارة */
+  const tick = (p, t) => {
+    if (!p.me) return '';
+    if (p.state === 'failed') return `<span class="tk err">!</span> ${p.err === 'limit' ? 'تجاوزت حدّ اليوم' : 'لم يُرسل'}`;
+    if (p.state === 'sending') return '<span class="tk">⏳</span>';
+    const read = t && t.seen && p.at && String(t.seen) >= String(p.at);
+    if (read) return '<span class="tk rd">✓✓</span> قُرئ';
+    if (p.delivered) return '<span class="tk">✓✓</span> وصل';
+    return '<span class="tk">✓</span> أُرسل';
+  };
+  const stChip = (s) => { const x = MBS[s] || MBS.new; return `<span class="badge" style="background:${x[2]};color:${x[1]}">${x[0]}</span>`; };
+
+  function vContact(d, kid) {
+    const T = allTickets(kid);
+    app.innerHTML = `<section class="screen">
+      ${offlineBar()}
+      <header class="bar-top">
+        <div class="row"><button class="back" data-go="#/s" aria-label="رجوع">${I.back('#0E1726')}</button>
+          <div style="display:flex;flex-direction:column;flex:1"><h1>تواصل مع الإدارة</h1><span class="sub">${esc(d.s && d.s.n || '')}</span></div></div>
+      </header>
+      <main class="list" style="flex:1;padding:14px 16px;gap:12px">
+        <button class="newreq" data-go="#/s/c/new">${ic('plus', { s: 22, c: '#fff' })}<span><b>طلب أو رسالة جديدة</b><small>مقابلة · مستند · استفسار عن غياب · شكوى · اقتراح</small></span></button>
+        ${!T.length ? `<div class="empty"><div class="ei" style="background:#E8F1FD">${ic('send', { s: 28, c: '#1E6FD9' })}</div>
+            لم ترسل أيّ طلب بعد.<br>تصلك الردود هنا، ويصلك تنبيه عند الردّ.</div>`
+          : T.map((t) => `<button class="tkt" data-go="#/s/c/${esc(t.lid)}">
+              <div class="ti">${(MBK[t.kind] || MBK.other)[1]}</div>
+              <div class="tx"><div class="th"><b>${esc((MBK[t.kind] || MBK.other)[0])}</b>${t.no ? `<span class="no">${esc(t.no)}</span>` : ''}${stChip(t.status)}</div>
+                <span class="tl">${t.last ? (t.last.me ? 'أنت: ' : 'الإدارة: ') + esc(t.last.b) : ''}</span>
+                <span class="tt">${esc(fDT(t.last ? t.last.at : t.at))}</span></div>
+              ${t.unread ? `<span class="dot">${t.unread}</span>` : ''}</button>`).join('')}
+        <div class="note">${ic('lock', { s: 20, c: '#1658AE', st: 'margin-top:2px' })}<span>رسائلك مشفّرة، ولا يقرؤها إلا مسؤولو المركز. وتصل خلال دقيقة تقريبًا.</span></div>
+        ${stFoot(d)}
+      </main>
+      ${stNav('con', d, kid)}
+    </section>`;
+  }
+
+  function vCompose(d, kid) {
+    const c = SS.get('pp.compose', null) || {};
+    const ref = c.ref ? allMsgs(d, kid).find((m) => 'm' + m.id === c.ref) : null;
+    const kinds = ref ? ['reply'] : ['meeting', 'document', 'absence', 'complaint', 'suggestion'];
+    const kind = ref ? 'reply' : (kinds.includes(c.kind) ? c.kind : null);
+    app.innerHTML = `<section class="screen">
+      ${offlineBar()}
+      <header class="bar-top">
+        <div class="row"><button class="back" data-go="${ref ? '#/s/msg' : '#/s/c'}" aria-label="رجوع">${I.back('#0E1726')}</button>
+          <div style="display:flex;flex-direction:column;flex:1"><h1>${ref ? 'ردّ على رسالة الإدارة' : 'طلب أو رسالة جديدة'}</h1><span class="sub">${esc(d.s && d.s.n || '')}</span></div></div>
+      </header>
+      <main class="list" style="flex:1;padding:14px 16px;gap:12px">
+        ${ref ? `<div class="quote"><b>رسالة الإدارة — ${esc(fDT(ref.at))}</b><p>${esc(ref.b)}</p></div>`
+          : `<div><div class="lbl">نوع الطلب</div><div class="kinds">${kinds.map((k) => `<button class="kind ${kind === k ? 'on' : ''}" data-kind="${k}">
+              <span>${MBK[k][1]}</span>${MBK[k][0]}</button>`).join('')}</div></div>`}
+        <div><label class="lbl" for="cmpT">${ref ? 'ردّك' : 'التفاصيل'}</label>
+          <textarea id="cmpT" class="cmp" maxlength="2000" rows="6" placeholder="${ref ? 'اكتب ردّك على الإدارة…' : 'اكتب طلبك بوضوح: ما المطلوب ومتى…'}">${esc(c.text || '')}</textarea>
+          <div class="cnt"><span id="cmpN">${(c.text || '').length} / 2000</span><span>يصل خلال دقيقة تقريبًا</span></div></div>
+        <button class="btn" id="cmpGo" data-a="send">${ic('send', { s: 20, c: '#fff' })} إرسال</button>
+        <div class="note">${ic('info', { s: 20, c: '#1658AE', st: 'margin-top:2px' })}<span>يصلك رقم متابعة للطلب، وترى هنا متى قرأته الإدارة وردّها عليه.</span></div>
+      </main>
+    </section>`;
+    const tx = $('#cmpT');
+    tx.addEventListener('input', () => { $('#cmpN').textContent = `${tx.value.length} / 2000`; SS.set('pp.compose', { ...SS.get('pp.compose', {}), text: tx.value }); });
+    setTimeout(() => tx.focus(), 250);
+  }
+
+  async function doSend() {
+    const kid = currentKid(); if (!kid || busy) return;
+    const c = SS.get('pp.compose', null) || {};
+    const text = ($('#cmpT') && $('#cmpT').value || '').trim();
+    const isReply = !!c.ref;
+    if (!isReply && !c.kind) { SND.play('error'); return toast('اختر نوع الطلب أولًا'); }
+    if (text.length < 3) { SND.play('error'); return toast('اكتب نصّ الرسالة'); }
+    busy = true;
+    const b = $('#cmpGo'); if (b) { b.disabled = true; b.innerHTML = '<span class="spin" aria-hidden="true"></span> جارٍ الإرسال…'; }
+    const lid = await mbSend(kid, { type: 'ticket', kind: isReply ? 'reply' : c.kind, ref: c.ref || null, text });
+    busy = false;
+    SS.del('pp.compose');
+    const o = mbGet(kid).out.find((x) => x.lid === lid);
+    if (o && o.state === 'sent') { SND.play('fresh'); toast('أُرسل طلبك — ستصلك المتابعة هنا'); }
+    else { SND.play('error'); toast(o && o.err === 'limit' ? 'تجاوزت عدد الرسائل المسموح اليوم' : 'لم يُرسل — سيُعاد إرساله تلقائيًّا عند توفّر الإنترنت'); }
+    location.replace('#/s/c/' + lid);
+  }
+
+  function vThread(d, kid, lid) {
+    const t = allTickets(kid).find((x) => x.lid === lid);
+    if (!t) return go('#/s/c');
+    const ref = t.ref ? allMsgs(d, kid).find((m) => 'm' + m.id === t.ref) : null;
+    const closed = t.status === 'closed';
+    app.innerHTML = `<section class="screen">
+      ${offlineBar()}
+      <header class="bar-top">
+        <div class="row"><button class="back" data-go="#/s/c" aria-label="رجوع">${I.back('#0E1726')}</button>
+          <div style="display:flex;flex-direction:column;flex:1;min-width:0"><h1>${(MBK[t.kind] || MBK.other)[1]} ${esc((MBK[t.kind] || MBK.other)[0])}</h1>
+            <span class="sub">${t.no ? `رقم المتابعة ${esc(t.no)}` : 'بانتظار رقم المتابعة'}</span></div>${stChip(t.status)}</div>
+      </header>
+      <main class="list chat" style="flex:1;padding:14px 16px;gap:10px" id="chat">
+        ${ref ? `<div class="quote"><b>ردًّا على رسالة الإدارة — ${esc(fDT(ref.at))}</b><p>${esc(ref.b)}</p></div>` : ''}
+        ${t.posts.map((p) => `<div class="bub ${p.me ? 'me' : 'them'}">
+            ${p.me ? '' : `<div class="bh"><img src="icons/logo.png" alt=""> إدارة جودة وتكنولوجيا التعليم</div>`}
+            <p>${esc(p.b)}</p>
+            <div class="bm"><span>${esc(fDT(p.at))}</span><span>${tick(p, t)}</span></div>
+            ${p.me && p.state === 'failed' ? `<button class="link" data-a="retry">إعادة الإرسال</button>` : ''}
+          </div>`).join('')}
+        ${t.status === 'review' ? '<div class="sys">قرأت الإدارة طلبك وهو قيد المراجعة</div>' : ''}
+        ${closed ? '<div class="sys">أُغلق هذا الطلب — يمكنك تقديم طلب جديد من «تواصل»</div>' : ''}
+      </main>
+      ${closed || ['sending', 'failed'].includes(t.status) ? '' : `
+      <div class="composer"><textarea id="rpT" rows="1" maxlength="2000" placeholder="اكتب رسالة…"></textarea>
+        <button class="sendb" data-a="post" data-tl="${esc(t.lid)}" aria-label="إرسال">${ic('send', { s: 22, c: '#fff' })}</button></div>`}
+    </section>`;
+    const ch = $('#chat'); if (ch) ch.scrollTop = ch.scrollHeight;
+    window.scrollTo(0, document.body.scrollHeight);
+    const ta = $('#rpT');
+    if (ta) ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; });
+    /* ردودُ الإدارة ظهرت أمامه: إيصالُ القراءة */
+    mbAck(kid, t.posts.filter((p) => !p.me).map((p) => 'p' + p.id), 'r');
+  }
+
+  async function doPost(tl) {
+    const kid = currentKid(); const ta = $('#rpT'); if (!kid || !ta || busy) return;
+    const text = ta.value.trim(); if (text.length < 1) return;
+    busy = true; ta.disabled = true;
+    await mbSend(kid, { type: 'post', tl, text });
+    busy = false;
+    SND.play('tap');
+    vThread(S.data, kid, tl);
+  }
+
+  /* متابعةٌ دوريّة ما دام وليُّ الأمر في صفحة ابنه: ردٌّ جديد ⇒ صوتٌ وتنبيه */
+  setInterval(async () => {
+    const kid = currentKid();
+    if (!kid || !mbURL() || document.visibilityState !== 'visible' || route()[0] !== 's' || busy) return;
+    try {
+      await mbRetry(kid);
+      const r = await mbFetch(kid);
+      S.mbAt = Date.now();
+      if (r.fresh.length) {
+        SND.play('msg');
+        toast(r.fresh.some((x) => x[0] === 'p') ? 'وصلك ردّ جديد من الإدارة' : 'رسالة جديدة من الإدارة');
+        mbAck(kid, r.fresh, 'd');
+      }
+      /* لا يُعاد رسمُ شاشةٍ يكتب فيها */
+      const typing = document.activeElement && /TEXTAREA|INPUT/.test(document.activeElement.tagName) && document.activeElement.value;
+      if (!typing && route()[2] !== 'new') render();
+    } catch (_) {}
+  }, 30000);
 
   /* ------------------------------------------------ الإعدادات */
   function vSettings() {
@@ -716,10 +998,11 @@
   }
 
   document.addEventListener('click', async (e) => {
-    const t = e.target.closest('[data-go],[data-a],[data-nf],[data-af],[data-kid],[data-unkid]');
+    const t = e.target.closest('[data-go],[data-a],[data-nf],[data-af],[data-kid],[data-unkid],[data-reply],[data-kind]');
     if (!t) return;
     if (t.dataset.f) SS.set('pp.absF', t.dataset.f);
     if (t.dataset.go) {
+      if (t.dataset.go === '#/s/c/new') SS.set('pp.compose', {});
       if (t.closest('.nav,.seg,.chips')) SND.play('tap');
       if (t.dataset.go === '#/home') S.splashDone = true;
       if (t.dataset.go === '#/s/abs' && !t.dataset.f && route()[1] !== 'abs') SS.set('pp.absF', 'all');
@@ -727,6 +1010,9 @@
     }
     if (t.dataset.nf) { SND.play('tap'); SS.set('pp.newsF', t.dataset.nf); return vNews(); }
     if (t.dataset.af) { SND.play('tap'); SS.set('pp.absF', t.dataset.af); return vAbsence(S.data, currentKid()); }
+    if (t.dataset.reply) { SS.set('pp.compose', { ref: 'm' + t.dataset.reply, kind: 'reply' }); return go('#/s/c/new'); }
+    if (t.dataset.kind) { SND.play('tap'); SS.set('pp.compose', { ...SS.get('pp.compose', {}), kind: t.dataset.kind });
+      document.querySelectorAll('.kind').forEach((b) => b.classList.toggle('on', b.dataset.kind === t.dataset.kind)); return; }
     if (t.dataset.kid) return openKid(t.dataset.kid);
     if (t.dataset.unkid) { dropKid(t.dataset.unkid); toast('أُزيل من هذا الجهاز'); return vLogin(); }
     const a = t.dataset.a;
@@ -740,6 +1026,9 @@
     if (a === 'do-update') return applyUpdate();
     if (a === 'later') { hideUpd(); S.updLater = true; return; }
     if (a === 'forget') { LS.set('pp.kids', []); closeSheet(); toast('أُزيلت البيانات المحفوظة'); return; }
+    if (a === 'send') return doSend();
+    if (a === 'post') return doPost(t.dataset.tl);
+    if (a === 'retry') { const kid = currentKid(); if (kid) { await mbRetry(kid); render(); } return; }
     if (a === 'logout') { SS.del('pp.cur'); S.kid = null; S.data = null; return go('#/login'); }
   });
 
