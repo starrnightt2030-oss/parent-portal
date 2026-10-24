@@ -1,8 +1,8 @@
 /* بوابة ولي الأمر — عامل الخدمة
    الواجهة من الذاكرة أولًا (تفتح بلا إنترنت)، والبيانات من الشبكة أولًا
    (أحدث ما رُفع)، فإن انقطعت الشبكة عُرض آخر ما حُفظ. */
-const V = 'pp-97d6a9aea0';
-const SHELL = ['./', 'index.html', 'app.css?v=97d6a9aea0', 'app.js?v=97d6a9aea0', 'manifest.webmanifest',
+const V = 'pp-084b52410b';
+const SHELL = ['./', 'index.html', 'app.css?v=084b52410b', 'app.js?v=084b52410b', 'manifest.webmanifest',
                'icons/logo.png', 'icons/icon-192.png', 'icons/favicon.png'];
 
 self.addEventListener('install', (e) => {
@@ -27,6 +27,10 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const u = new URL(req.url);
+  /* طلباتُ النطاقات الأخرى (صندوق البريد خصوصًا) لا تمرّ بالذاكرة أبدًا —
+     وإلّا حُفظ ردُّ «لا جديد» وأُعيد إلى الأبد فلا يصل ردُّ الإدارة.
+     الخطوطُ وحدها تُحفظ ليعمل التطبيق بلا إنترنت. */
+  if (u.origin !== location.origin && !/(^|\.)fonts\.(googleapis|gstatic)\.com$/.test(u.hostname)) return;
 
   /* البيانات: الشبكة أولًا، ويُحفظ المفتاح بلا معامل الوقت */
   if (isData(u)) {

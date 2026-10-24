@@ -8,7 +8,7 @@
    ============================================================================ */
 'use strict';
 (function () {
-  const BUILD = '97d6a9aea0';
+  const BUILD = '084b52410b';
   const $ = (s, r = document) => r.querySelector(s);
   const app = $('#app');
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -501,6 +501,8 @@
   async function mbReq(kid, method, path, body) {
     const u = mbURL(); if (!u) throw Object.assign(new Error('nombox'), { code: 'nombox' });
     const K = await mbKeys(kid);
+    /* معاملُ وقتٍ لكلّ طلب: لا ذاكرةَ وسيطة (ولا عاملُ خدمةٍ قديم) تُعيد ردًّا قديمًا */
+    if (method === 'GET') path += (path.includes('?') ? '&' : '?') + '_=' + Date.now();
     const r = await fetch(u + path, { method, cache: 'no-store',
       headers: { 'X-Fid': kid.id, 'X-Tok': K.tok, ...(body ? { 'Content-Type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : undefined });
@@ -529,7 +531,7 @@
       } catch (_) { /* لا يُفكّ: ليس لهذا الطالب */ }
     }
     mbPut(kid, st);
-    return { fresh };
+    return { fresh, changed: (j.items || []).length };
   }
   async function mbSend(kid, p) {
     const st = mbGet(kid);
@@ -945,9 +947,14 @@
   }
 
   /* متابعةٌ دوريّة ما دام وليُّ الأمر في صفحة ابنه: ردٌّ جديد ⇒ صوتٌ وتنبيه */
+  let mbLastPoll = 0;
   setInterval(async () => {
     const kid = currentKid();
     if (!kid || !mbURL() || document.visibilityState !== 'visible' || route()[0] !== 's' || busy) return;
+    /* في شاشة التواصل كلَّ ١٠ ثوانٍ (محادثةٌ حيّة)، وفي غيرها كلَّ ٣٠ */
+    const fast = route()[1] === 'c';
+    if (Date.now() - mbLastPoll < (fast ? 9000 : 29000)) return;
+    mbLastPoll = Date.now();
     try {
       await mbRetry(kid);
       const r = await mbFetch(kid);
@@ -959,9 +966,9 @@
       }
       /* لا يُعاد رسمُ شاشةٍ يكتب فيها */
       const typing = document.activeElement && /TEXTAREA|INPUT/.test(document.activeElement.tagName) && document.activeElement.value;
-      if (!typing && route()[2] !== 'new') render();
+      if (!typing && route()[2] !== 'new' && r.changed) render();
     } catch (_) {}
-  }, 30000);
+  }, 3000);
 
   /* ------------------------------------------------ الإعدادات */
   function vSettings() {
