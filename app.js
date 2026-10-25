@@ -8,7 +8,7 @@
    ============================================================================ */
 'use strict';
 (function () {
-  const BUILD = '084b52410b';
+  const BUILD = '7abd33315b';
   const $ = (s, r = document) => r.querySelector(s);
   const app = $('#app');
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -205,8 +205,9 @@
 
   /* ------------------------------------------------ تثبيت التطبيق */
   let installEvt = null;
-  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; if (route()[0] === 'home') render(); });
-  window.addEventListener('appinstalled', () => { installEvt = null; toast('تمّ تثبيت التطبيق'); });
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e;
+    if (route()[0] === 'home') render(); setTimeout(() => instShow('evt'), 700); });
+  window.addEventListener('appinstalled', () => { installEvt = null; instHide(); SND.play('fresh'); toast('تمّ تثبيت التطبيق على هاتفك'); });
   const standalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
   async function doInstall() {
@@ -217,6 +218,173 @@
         : 'من قائمة المتصفح (النقاط الثلاث أعلى الشاشة) اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».'}</span></div>
       <button class="btn" data-a="close">حسنًا</button>`);
   }
+
+  /* ------------------------------------------------ رسالةُ التثبيت عند فتح البوابة في المتصفح
+     • Android/Chrome: زرٌّ واحد يفتح نافذة التثبيت مباشرةً.
+     • iPhone/iPad: لا يسمح Safari بالتثبيت بزرّ — فتُعرض الخطوتان بالصورة.
+     • متصفّحٌ لا يرسل حدثَ التثبيت (Firefox وغيره): خطوةُ القائمة.
+     «لاحقًا» يُخفيها ثلاثة أيام، ولا تظهر أبدًا داخل التطبيق المثبَّت. */
+  const instHide = () => { const e = $('#inst'); if (e) e.remove(); };
+  function instShow(mode, force) {
+    if (standalone() || $('#inst') || $('#upd')) return;
+    if (!force && Date.now() - LS.get('pp.instLater', 0) < 3 * 864e5) return;
+    if (mode === 'evt' && !installEvt) return;
+    const el = document.createElement('div');
+    el.id = 'inst'; el.className = 'upd inst'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', 'تثبيت التطبيق');
+    const steps = mode === 'ios'
+      ? `<ol class="isteps"><li>اضغط زرّ المشاركة <b class="ishare" aria-label="مشاركة">${svg('<path d="M12 3v12"/><path d="M8 7l4-4 4 4"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/>', { s: 18, c: '#1E6FD9' })}</b> أسفل الشاشة في Safari</li>
+          <li>اختر <b>«إضافة إلى الشاشة الرئيسية»</b> ثم <b>«إضافة»</b></li></ol>`
+      : mode === 'menu'
+      ? `<ol class="isteps"><li>افتح قائمة المتصفح <b>⋮</b> أعلى الشاشة</li><li>اختر <b>«تثبيت التطبيق»</b> أو <b>«إضافة إلى الشاشة الرئيسية»</b></li></ol>` : '';
+    el.innerHTML = `<div class="upd-c">
+      <div class="upd-i inst-i"><img src="icons/icon-192.png" alt=""></div>
+      <div class="upd-t"><b>ثبّت «بوابة ولي الأمر» على هاتفك</b>
+        <span>تفتح بلمسةٍ من الشاشة الرئيسية كأيّ تطبيق، وتصلك إشعاراتُ رسائل الإدارة وغياب ابنك فورًا.</span></div>
+      ${steps}
+      <div class="upd-b">${mode === 'evt' ? `<button class="btn" data-a="inst-go">${ic('dl', { s: 20, c: '#0B1F44' })} تثبيت التطبيق</button>`
+        : '<button class="btn" data-a="inst-later">فهمت</button>'}
+        ${mode === 'evt' ? '<button class="link" data-a="inst-later">لاحقًا</button>' : ''}</div>
+    </div>`;
+    document.body.appendChild(el);
+    SND.play('update');
+  }
+  async function instGo() {
+    instHide();
+    if (!installEvt) return doInstall();
+    installEvt.prompt();
+    let ok = false;
+    try { ok = (await installEvt.userChoice).outcome === 'accepted'; } catch (_) {}
+    installEvt = null;
+    if (!ok) LS.set('pp.instLater', Date.now());
+    if (route()[0] === 'home') render();
+  }
+  /* عند الفتح: iPhone تُعرض خطواته، وAndroid ينتظر حدثَ التثبيت ثم يُعرض الزرّ */
+  setTimeout(() => {
+    if (standalone()) return;
+    if (isIOS()) return instShow('ios');
+    setTimeout(() => { if (!installEvt && /android/i.test(navigator.userAgent)) instShow('menu'); }, 3500);
+  }, 1400);
+
+  /* ============================================================================
+     الإشعارات — تصل والتطبيقُ مغلق (Web Push)
+     ----------------------------------------------------------------------------
+     الهاتفُ يشترك لدى خدمة الإشعارات ويسجّل اشتراكه في صندوق البريد لكلّ طالبٍ
+     محفوظ. فإذا ردّت الإدارة أو أرسلت رسالة أو سُجّل غياب أوقظ الهاتفُ بإشعارٍ
+     بلا نصّ، فيسحب عاملُ الخدمة الجديدَ المشفّر ويفكّه ويعرضه. ولذلك يُحفظ له
+     (في IndexedDB) ما يلزمه ليفكّ: معرّفُ ملفّ الطالب ومفتاحُه ورمزُ الصندوق.
+     ============================================================================ */
+  const IDB = (() => {
+    let p = null;
+    const open = () => p || (p = new Promise((res, rej) => {
+      const r = indexedDB.open('pp-sw', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    }));
+    const tx = async (mode, fn) => { const db = await open(); return new Promise((res, rej) => {
+      const t = db.transaction('kv', mode); const q = fn(t.objectStore('kv'));
+      t.oncomplete = () => res(q && q.result); t.onerror = () => rej(t.error); }); };
+    return { get: (k) => tx('readonly', (s) => s.get(k)).catch(() => undefined),
+             set: (k, v) => tx('readwrite', (s) => s.put(v, k)).catch(() => {}) };
+  })();
+  const b64uDec = (s) => b64d(String(s).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((String(s).length + 3) % 4));
+  const b64uEnc = (buf) => b64e(new Uint8Array(buf)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const PUSH = {
+    ok: () => swOK && 'PushManager' in window && 'Notification' in window && !!mbURL(),
+    needInstall: () => isIOS() && !standalone(),
+    perm: () => ('Notification' in window) ? Notification.permission : 'unsupported',
+    on: () => LS.get('pp.push', false) === true && PUSH.perm() === 'granted',
+  };
+  /* ما يحتاجه عاملُ الخدمة ليسحب ويفكّ — للطلاب المحفوظين على هذا الجهاز */
+  async function swKids() {
+    const list = [], all = kids().slice();
+    const c = currentKid(); if (c && !all.some((x) => x.id === c.id)) all.push(c);
+    for (const k of all) { const K = await mbKeys(k); list.push({ id: k.id, k: k.k, tok: K.tok, name: k.name || '' }); }
+    await IDB.set('kids', list); await IDB.set('mbox', mbURL());
+    for (const k of all) { const st = mbGet(k); const cur = await IDB.get('seq.' + k.id); if (!cur || cur < st.seq) await IDB.set('seq.' + k.id, st.seq || 0); }
+    return list;
+  }
+  async function pushSubscribe(force) {
+    const reg = REG || await navigator.serviceWorker.ready;
+    const j = await fetch(mbURL() + '/vapid?_=' + Date.now(), { cache: 'no-store' }).then((r) => r.ok ? r.json() : null).catch(() => null);
+    if (!j || !j.key) throw Object.assign(new Error('nopush'), { code: 'nopush' });
+    let sub = await reg.pushManager.getSubscription();
+    if (sub && sub.options && sub.options.applicationServerKey && b64uEnc(sub.options.applicationServerKey) !== j.key) {
+      try { await sub.unsubscribe(); } catch (_) {} sub = null;
+    }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uDec(j.key) });
+    const sj = sub.toJSON(), day = todayStr();
+    const list = await swKids();
+    /* الأخبارُ السابقة لا يُعلَن عنها — يبدأ العدُّ من الآن */
+    if (!(await IDB.get('bseq')) && list[0]) {
+      try { const b = await mbReq(list[0], 'GET', '/p/bcast?since=999999999'); await IDB.set('bseq', b.max || 0); } catch (_) {}
+    }
+    for (const k of list) {
+      const was = LS.get('pp.sub.' + k.id, null);
+      if (!force && was && was.ep === sj.endpoint && was.d === day) continue;
+      await mbReq(k, 'POST', '/p/sub', { endpoint: sj.endpoint, keys: sj.keys });
+      LS.set('pp.sub.' + k.id, { ep: sj.endpoint, d: day });
+    }
+    return true;
+  }
+  async function pushEnable() {
+    if (PUSH.needInstall()) {
+      SND.play('error');
+      return sheet(`<h2>تفعيل الإشعارات على iPhone</h2>
+        <div class="note">${ic('info', { s: 20, st: 'margin-top:3px' })}<span>يسمح iPhone بالإشعارات للتطبيق المثبَّت فقط:
+          ثبّت البوابة على الشاشة الرئيسية (زرّ المشاركة ← «إضافة إلى الشاشة الرئيسية»)، ثم افتحها من أيقونتها واضغط «تفعيل الإشعارات».</span></div>
+        <button class="btn" data-a="close">حسنًا</button>`);
+    }
+    if (!PUSH.ok()) { SND.play('error'); return toast('هذا المتصفح لا يدعم الإشعارات — استخدم Chrome أو Safari حديثًا'); }
+    let p = Notification.permission;
+    if (p === 'default') { try { p = await Notification.requestPermission(); } catch (_) { p = Notification.permission; } }
+    if (p !== 'granted') {
+      SND.play('error'); LS.set('pp.push', false);
+      return sheet(`<h2>الإشعارات محظورة</h2>
+        <div class="note">${ic('info', { s: 20, st: 'margin-top:3px' })}<span>رفض المتصفح الإشعارات لهذه البوابة. لتفعيلها: اضغط رمز القفل 🔒
+          بجوار عنوان الصفحة ← «الأذونات» ← «الإشعارات» ← «سماح»، ثم ارجع واضغط «تفعيل الإشعارات».</span></div>
+        <button class="btn" data-a="close">حسنًا</button>`);
+    }
+    const b = $('[data-a="push-on"]'); if (b) { b.disabled = true; b.innerHTML = '<span class="spin" aria-hidden="true"></span> جارٍ التفعيل…'; }
+    try {
+      await pushSubscribe(true);
+      LS.set('pp.push', true);
+      SND.play('fresh'); toast('تمّ تفعيل الإشعارات — يصلك الجديد فورًا حتى والتطبيق مغلق');
+      setTimeout(() => pushTest(true), 1500);
+    } catch (e) {
+      SND.play('error');
+      toast(e.code === 'nopush' ? 'الإشعارات غير مفعّلة من المركز بعد — حاول لاحقًا' : 'تعذّر تفعيل الإشعارات — تأكّد من الإنترنت وحاول مرة أخرى');
+    }
+    render();
+  }
+  /* إشعارٌ تجريبيّ يصل هذا الجهازَ نفسَه — يُثبت أنّ الإشعارات تعمل، أو يقول لماذا لا تعمل */
+  async function pushTest(quiet) {
+    const kid = currentKid() || kids()[0];
+    if (!kid || !PUSH.ok()) return;
+    try {
+      const reg = REG || await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (!sub) { if (!quiet) toast('الإشعارات غير مفعّلة على هذا الجهاز — اضغط «تفعيل الإشعارات»'); return; }
+      await IDB.set('forceShow', Date.now());
+      const r = await mbReq(kid, 'POST', '/p/test', { endpoint: sub.endpoint });
+      if (!r.this_device) { await pushSubscribe(true); if (!quiet) toast('أُعيد تسجيل الجهاز — جرّب الإشعار التجريبي مرّة أخرى'); return; }
+      if (r.sent) { if (!quiet) toast('أُرسل إشعارٌ تجريبيّ — يظهر الآن في شريط الإشعارات'); }
+      else toast('تعذّر وصول الإشعار' + (r.errors && r.errors[0] ? ` (${r.errors[0].status || ''} ${r.errors[0].text || ''})`.slice(0, 90) : ''));
+    } catch (e) { if (!quiet) toast(e.code === 429 ? 'انتظر ثوانيَ قبل تجربةٍ أخرى' : 'تعذّر إرسال الإشعار التجريبي — تأكّد من الإنترنت'); }
+  }
+  async function pushDisable() {
+    LS.set('pp.push', false);
+    try {
+      const reg = REG || await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        for (const k of kids()) { try { await mbReq(k, 'POST', '/p/unsub', { endpoint: sub.endpoint }); } catch (_) {} LS.del('pp.sub.' + k.id); }
+        await sub.unsubscribe();
+      }
+    } catch (_) {}
+    toast('أُوقفت الإشعارات');
+  }
+  /* الطالبُ يُضاف أو يُزال: يُحدَّث ما يعرفه عاملُ الخدمة واشتراكُ الصندوق */
+  const pushRefresh = () => { if (PUSH.on() && PUSH.ok()) pushSubscribe(false).catch(() => {}); };
 
   /* ============================================================================
      الشاشات
@@ -439,6 +607,7 @@
       if (rem) saveKid(kid);
       busy = false;
       S.greet = true;
+      pushRefresh();
       go('#/s');
     } catch (e) {
       busy = false;
@@ -456,6 +625,7 @@
     const k = kids().find((x) => x.id === id);
     if (!k) return vLogin();
     S.kid = k; S.data = null; S.greet = true; SS.set('pp.cur', k);
+    pushRefresh();
     go('#/s');
   }
 
@@ -524,13 +694,15 @@
         const o = JSON.parse(new TextDecoder().decode(pt));
         const had = st.items[it.id];
         st.items[it.id] = o; delete st.gone[it.id];
-        if (!had && (o.type === 'post' || o.type === 'msg')) fresh.push(it.id);
+        if (!had && (o.type === 'post' || o.type === 'msg' || o.type === 'note')) fresh.push(it.id);
         /* رسالتي وصلت الإدارة: لا حاجة لنسختها المعلّقة */
         if (o.type === 'mine' && o.lid) st.out = st.out.filter((x) => x.lid !== o.lid);
         if (o.type === 'ticket') st.out = st.out.filter((x) => !(x.p.type === 'ticket' && x.lid === o.lid && x.state === 'sent'));
       } catch (_) { /* لا يُفكّ: ليس لهذا الطالب */ }
     }
     mbPut(kid, st);
+    /* ما رآه التطبيق لا يُعيد عاملُ الخدمة الإشعارَ به */
+    if (PUSH.on()) IDB.get('seq.' + kid.id).then((v) => { if (!v || v < st.seq) IDB.set('seq.' + kid.id, st.seq); }).catch(() => {});
     return { fresh, changed: (j.items || []).length };
   }
   async function mbSend(kid, p) {
@@ -598,6 +770,9 @@
       .sort((a, b) => String((b.last && b.last.at) || b.at || '').localeCompare(String((a.last && a.last.at) || a.at || '')));
   }
   const mbUnread = (kid) => kid ? allTickets(kid).reduce((n, t) => n + t.unread, 0) : 0;
+  /* مستجدّاتُ الطالب (غياب · إنذار · فصل · عقوبة) — تصل بعد كلّ مزامنة */
+  const allNotes = (kid) => Object.values(mbGet(kid).items).filter((o) => o.type === 'note')
+    .sort((a, b) => String(b.at).localeCompare(String(a.at)) || b.id - a.id);
 
   const ST = {
     ok: { t: 'منتظم', ink: '#0E7A4C', soft: '#E5F6EE', icon: 'ok' },
@@ -673,6 +848,22 @@
     return vSummary(d, kid);
   }
 
+  function pushCard() {
+    if (!mbURL() || PUSH.on() || LS.get('pp.pushNo', 0) > Date.now()) return '';
+    const ios = PUSH.needInstall();
+    if (!ios && !PUSH.ok()) return '';
+    const denied = PUSH.perm() === 'denied';
+    return `<section class="card pushcta">
+      <div class="pi">${ic('bell', { s: 26, c: '#fff' })}</div>
+      <div class="px"><b>${denied ? 'الإشعارات محظورة على هذا الجهاز' : 'فعّل الإشعارات'}</b>
+        <span>${ios ? 'على iPhone ثبّت البوابة على الشاشة الرئيسية أولًا، ثم فعّل الإشعارات من داخلها.'
+          : denied ? 'اسمح بالإشعارات من إعدادات المتصفح ليصلك ردُّ الإدارة وأيُّ غيابٍ أو إنذار.'
+          : 'يصلك ردُّ الإدارة ورسائلُها وأيُّ غيابٍ أو إنذارٍ لابنك فورًا — حتى والتطبيقُ مغلق.'}</span>
+        <div class="pb"><button class="btn sm" data-a="push-on">${ic('bell', { s: 18, c: '#fff' })} ${ios ? 'كيف أفعّلها؟' : 'تفعيل الإشعارات'}</button>
+          <button class="link" data-a="push-no">ليس الآن</button></div></div>
+    </section>`;
+  }
+
   function vSummary(d, kid) {
     if (S.greet !== false) { S.greet = false; SND.play(unreadMsgs(d, kid) ? 'msg' : 'data'); }
     const st = ST[d.st] || ST.ok;
@@ -699,6 +890,7 @@
           <div class="sx"><span class="k">حالة الانتظام</span><span class="v" style="color:${st.ink}">${esc(st.t)}</span>
             <span class="d">${esc(sub)}</span></div>
         </section>
+        ${pushCard()}
         ${c.p != null ? (() => {
           const rec = (c.p || 0) + abs + (c.x || 0) + (c.s || 0) + (c.d || 0) + (c.l || 0);
           const pct = rec ? Math.round((c.p || 0) / rec * 100) : 0;
@@ -725,6 +917,10 @@
           <div class="prow"><div class="pl"><span>الغياب المنفصل في الفترة الحالية</span><b>${d.lim.sep[0]} من ${d.lim.sep[1]} يومًا</b></div>${bar(d.lim.sep[0], d.lim.sep[1], d.lim.ws)}</div>
           <div class="phint">يصدر الإنذار عند ${d.lim.wc} أيام غياب متصلة أو ${d.lim.ws} منفصلة، والفصل عند ${d.lim.cons[1]} متصلة أو ${d.lim.sep[1]} منفصلة.</div>
         </section>` : ''}
+        ${(() => { const N = allNotes(kid).slice(0, 3); return N.length ? `<section class="card notes">
+          <h2>${ic('bell', { s: 18, c: '#1E6FD9' })} آخر المستجدّات</h2>
+          ${N.map((n) => `<div class="nt"><p>${esc(n.b)}</p><span>${esc(fDT(n.at))}</span></div>`).join('')}
+        </section>` : ''; })()}
         ${msgs.length ? `<button class="msgcta" data-go="#/s/msg">
           <div class="mi">${ic('chat', { c: '#fff' })}${u ? `<span class="dot">${u}</span>` : ''}</div>
           <div style="flex:1;display:flex;flex-direction:column;gap:2px;min-width:0">
@@ -842,14 +1038,14 @@
       <main class="list" style="flex:1;padding:14px 16px;gap:12px">
         <button class="newreq" data-go="#/s/c/new">${ic('plus', { s: 22, c: '#fff' })}<span><b>طلب أو رسالة جديدة</b><small>مقابلة · مستند · استفسار عن غياب · شكوى · اقتراح</small></span></button>
         ${!T.length ? `<div class="empty"><div class="ei" style="background:#E8F1FD">${ic('send', { s: 28, c: '#1E6FD9' })}</div>
-            لم ترسل أيّ طلب بعد.<br>تصلك الردود هنا، ويصلك تنبيه عند الردّ.</div>`
+            لم ترسل أيّ طلب بعد.<br>تصلك الردود هنا، ويصلك إشعارٌ عند الردّ.</div>`
           : T.map((t) => `<button class="tkt" data-go="#/s/c/${esc(t.lid)}">
               <div class="ti">${(MBK[t.kind] || MBK.other)[1]}</div>
               <div class="tx"><div class="th"><b>${esc((MBK[t.kind] || MBK.other)[0])}</b>${t.no ? `<span class="no">${esc(t.no)}</span>` : ''}${stChip(t.status)}</div>
                 <span class="tl">${t.last ? (t.last.me ? 'أنت: ' : 'الإدارة: ') + esc(t.last.b) : ''}</span>
                 <span class="tt">${esc(fDT(t.last ? t.last.at : t.at))}</span></div>
               ${t.unread ? `<span class="dot">${t.unread}</span>` : ''}</button>`).join('')}
-        <div class="note">${ic('lock', { s: 20, c: '#1658AE', st: 'margin-top:2px' })}<span>رسائلك مشفّرة، ولا يقرؤها إلا مسؤولو المركز. وتصل خلال دقيقة تقريبًا.</span></div>
+        <div class="note">${ic('lock', { s: 20, c: '#1658AE', st: 'margin-top:2px' })}<span>رسائلك مشفّرة، ولا يقرؤها إلا مسؤولو المركز. وتصل خلال ثوانٍ.</span></div>
         ${stFoot(d)}
       </main>
       ${stNav('con', d, kid)}
@@ -873,7 +1069,7 @@
               <span>${MBK[k][1]}</span>${MBK[k][0]}</button>`).join('')}</div></div>`}
         <div><label class="lbl" for="cmpT">${ref ? 'ردّك' : 'التفاصيل'}</label>
           <textarea id="cmpT" class="cmp" maxlength="2000" rows="6" placeholder="${ref ? 'اكتب ردّك على الإدارة…' : 'اكتب طلبك بوضوح: ما المطلوب ومتى…'}">${esc(c.text || '')}</textarea>
-          <div class="cnt"><span id="cmpN">${(c.text || '').length} / 2000</span><span>يصل خلال دقيقة تقريبًا</span></div></div>
+          <div class="cnt"><span id="cmpN">${(c.text || '').length} / 2000</span><span>يصل خلال ثوانٍ</span></div></div>
         <button class="btn" id="cmpGo" data-a="send">${ic('send', { s: 20, c: '#fff' })} إرسال</button>
         <div class="note">${ic('info', { s: 20, c: '#1658AE', st: 'margin-top:2px' })}<span>يصلك رقم متابعة للطلب، وترى هنا متى قرأته الإدارة وردّها عليه.</span></div>
       </main>
@@ -946,35 +1142,44 @@
     vThread(S.data, kid, tl);
   }
 
-  /* متابعةٌ دوريّة ما دام وليُّ الأمر في صفحة ابنه: ردٌّ جديد ⇒ صوتٌ وتنبيه */
-  let mbLastPoll = 0;
-  setInterval(async () => {
+  /* متابعةٌ دوريّة ما دام وليُّ الأمر في صفحة ابنه: ردٌّ جديد ⇒ صوتٌ وتنبيه.
+     وإشعارُ الهاتف (Web Push) يوقظها في لحظتها بلا انتظار الدورة. */
+  let mbLastPoll = 0, mbPolling = false;
+  async function mbPoll(now) {
     const kid = currentKid();
-    if (!kid || !mbURL() || document.visibilityState !== 'visible' || route()[0] !== 's' || busy) return;
-    /* في شاشة التواصل كلَّ ١٠ ثوانٍ (محادثةٌ حيّة)، وفي غيرها كلَّ ٣٠ */
+    if (!kid || !mbURL() || document.visibilityState !== 'visible' || route()[0] !== 's' || busy || mbPolling) return;
+    /* في شاشة التواصل كلَّ ٥ ثوانٍ (محادثةٌ حيّة)، وفي غيرها كلَّ ١٢ */
     const fast = route()[1] === 'c';
-    if (Date.now() - mbLastPoll < (fast ? 9000 : 29000)) return;
-    mbLastPoll = Date.now();
+    if (!now && Date.now() - mbLastPoll < (fast ? 5000 : 12000)) return;
+    mbLastPoll = Date.now(); mbPolling = true;
     try {
       await mbRetry(kid);
       const r = await mbFetch(kid);
       S.mbAt = Date.now();
       if (r.fresh.length) {
         SND.play('msg');
-        toast(r.fresh.some((x) => x[0] === 'p') ? 'وصلك ردّ جديد من الإدارة' : 'رسالة جديدة من الإدارة');
-        mbAck(kid, r.fresh, 'd');
+        const note = r.fresh.find((x) => x[0] === 'n');
+        const o = note && mbGet(kid).items[note];
+        toast(r.fresh.some((x) => x[0] === 'p') ? 'وصلك ردّ جديد من الإدارة'
+          : r.fresh.some((x) => x[0] === 'm') ? 'رسالة جديدة من الإدارة' : (o ? o.b : 'مستجدّات جديدة عن ابنك'));
+        mbAck(kid, r.fresh.filter((x) => /^[mp]/.test(x)), 'd');
+        if (note) ensureData(true).catch(() => {});
       }
       /* لا يُعاد رسمُ شاشةٍ يكتب فيها */
       const typing = document.activeElement && /TEXTAREA|INPUT/.test(document.activeElement.tagName) && document.activeElement.value;
       if (!typing && route()[2] !== 'new' && r.changed) render();
-    } catch (_) {}
-  }, 3000);
+    } catch (_) {} finally { mbPolling = false; }
+  }
+  setInterval(() => mbPoll(false), 2500);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(() => mbPoll(true), 300); });
 
   /* ------------------------------------------------ الإعدادات */
   function vSettings() {
     const n = kids().length;
     sheet(`<h2>الإعدادات</h2>
       ${!standalone() ? `<button class="opt" data-a="install">${ic('dl', { c: '#1E6FD9' })}<span>تثبيت التطبيق<small>أضِفه إلى الشاشة الرئيسية ليفتح كتطبيق</small></span></button>` : ''}
+      ${mbURL() && (PUSH.ok() || PUSH.needInstall()) ? `<button class="opt" data-a="${PUSH.on() ? 'push-off' : 'push-on'}">${ic(PUSH.on() ? 'bell' : 'mute', { c: '#1E6FD9' })}<span>إشعارات الهاتف: ${PUSH.on() ? 'مفعّلة' : 'متوقّفة'}<small>${PUSH.on() ? 'يصلك ردُّ الإدارة والرسائلُ والمستجدّات والتطبيقُ مغلق — اضغط للإيقاف' : 'اضغط للتفعيل — يصلك الجديد فورًا حتى والتطبيقُ مغلق'}</small></span></button>` : ''}
+      ${PUSH.on() ? `<button class="opt" data-a="push-test">${ic('send', { c: '#1E6FD9' })}<span>إرسال إشعار تجريبي<small>يصل هذا الجهاز خلال ثوانٍ — للتأكد أن الإشعارات تعمل</small></span></button>` : ''}
       <button class="opt" data-a="sound">${ic(SND.on() ? 'bell' : 'mute', { c: '#1E6FD9' })}<span>أصوات التطبيق: ${SND.on() ? 'تعمل' : 'متوقّفة'}<small>نغمة عند الفتح وعرض البيانات ووصول رسالة أو تحديث</small></span></button>
       <button class="opt" data-a="update">${ic('dl', { c: '#1E6FD9' })}<span>البحث عن تحديث للتطبيق<small>الإصدار الحالي ${esc(BUILD)}</small></span></button>
       <button class="opt" data-a="refresh">${ic('sync', { c: '#1E6FD9' })}<span>تحديث البيانات الآن<small>${S.meta && S.meta.at ? `آخر تحديث: ${esc(fDT(S.meta.at))}` : 'جلب أحدث الأخبار والبيانات'}</small></span></button>
@@ -997,6 +1202,13 @@
       if (r[0] === 'news') return r[1] ? vArticle(r[1]) : vNews();
       if (r[0] === 'login') { if (!S.meta) await loadMeta(); return vLogin(); }
       if (r[0] === 's') return vStudent(r[1] || 'sum');
+      /* من الإشعار: يُفتح الطالبُ المعنيّ ثم الشاشةُ المعنيّة */
+      if (r[0] === 'open') {
+        const k = kids().find((x) => x.id === r[1]);
+        if (k) { S.kid = k; S.data = null; S.greet = true; SS.set('pp.cur', k); S.splashDone = true;
+                 return location.replace('#/s' + (r[2] && r[2] !== 'sum' ? '/' + r[2] : '')); }
+        return location.replace(r[2] === 'news' ? '#/news' : '#/home');
+      }
       location.replace('#/home');
     } catch (e) {
       app.innerHTML = `<section class="screen" style="padding:40px 22px;gap:16px"><div class="note err">${ic('alert', { s: 20 })}<span>حدث خطأ — أعد فتح التطبيق.</span></div>
@@ -1021,18 +1233,28 @@
     if (t.dataset.kind) { SND.play('tap'); SS.set('pp.compose', { ...SS.get('pp.compose', {}), kind: t.dataset.kind });
       document.querySelectorAll('.kind').forEach((b) => b.classList.toggle('on', b.dataset.kind === t.dataset.kind)); return; }
     if (t.dataset.kid) return openKid(t.dataset.kid);
-    if (t.dataset.unkid) { dropKid(t.dataset.unkid); toast('أُزيل من هذا الجهاز'); return vLogin(); }
+    if (t.dataset.unkid) {
+      const gone = kids().find((x) => x.id === t.dataset.unkid);
+      if (gone && PUSH.on()) { try { const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+        if (sub) await mbReq(gone, 'POST', '/p/unsub', { endpoint: sub.endpoint }); } catch (_) {} LS.del('pp.sub.' + gone.id); }
+      dropKid(t.dataset.unkid); toast('أُزيل من هذا الجهاز'); pushRefresh(); return vLogin(); }
     const a = t.dataset.a;
     if (a === 'settings') return vSettings();
-    if (a === 'install') { closeSheet(); return doInstall(); }
+    if (a === 'install') { closeSheet(); return installEvt ? instGo() : doInstall(); }
+    if (a === 'inst-go') return instGo();
+    if (a === 'inst-later') { LS.set('pp.instLater', Date.now()); return instHide(); }
+    if (a === 'push-on') { closeSheet(); return pushEnable(); }
+    if (a === 'push-off') { closeSheet(); await pushDisable(); return render(); }
+    if (a === 'push-test') { closeSheet(); return pushTest(false); }
+    if (a === 'push-no') { LS.set('pp.pushNo', Date.now() + 7 * 864e5); return render(); }
     if (a === 'close') return closeSheet();
     if (a === 'refresh') { closeSheet(); await Promise.all([loadMeta(true), loadNews(true)]); if (S.kid) await ensureData(true).catch(() => {});
       SND.play('fresh'); toast('تمّ تحديث البيانات'); return render(); }
     if (a === 'sound') { SND.set(!SND.on()); if (SND.on()) SND.play('data'); return vSettings(); }
     if (a === 'update') { closeSheet(); return checkUpdateNow(true); }
     if (a === 'do-update') return applyUpdate();
-    if (a === 'later') { hideUpd(); S.updLater = true; return; }
-    if (a === 'forget') { LS.set('pp.kids', []); closeSheet(); toast('أُزيلت البيانات المحفوظة'); return; }
+
+    if (a === 'forget') { if (PUSH.on()) await pushDisable(); LS.set('pp.kids', []); IDB.set('kids', []); closeSheet(); toast('أُزيلت البيانات المحفوظة'); return; }
     if (a === 'send') return doSend();
     if (a === 'post') return doPost(t.dataset.tl);
     if (a === 'retry') { const kid = currentKid(); if (kid) { await mbRetry(kid); render(); } return; }
@@ -1049,83 +1271,158 @@
   });
 
   /* ============================================================================
-     التحديث — رسالةٌ تطلب من وليّ الأمر تحديث التطبيق حين يُرفع إصدارٌ أحدث
+     التحديث الإلزامي — لا يعمل التطبيقُ على نسخةٍ قديمة
      ----------------------------------------------------------------------------
-     طريقان يكشفانه: عاملُ الخدمة يجد sw.js جديدًا فينتظر (لا يحلّ وحده)،
-     أو meta.json يحمل رقمَ إصدارٍ غير الذي يعمل الآن.
+     يُعرف الإصدارُ الأحدث من مصدرين:
+       • meta.json على GitHub Pages — رقمُ الإصدار المنشور فعلًا.
+       • صندوقُ البريد (Cloudflare) — يعرفه فورَ المزامنة، قبل أن ينشر GitHub الملفّات
+         (قد يتأخّر دقيقةً أو أكثر). فإن سبق الصندوقُ انتظر التطبيقُ حتى يُنشر ثم حدّث.
+     ويُفحص عند الفتح، وعند العودة إلى التطبيق، وكلَّ دقيقة، وعند إشعار «تحديث جديد».
+     والتحديثُ نفسُه لا يُعيد التحميل إلا بعد التأكّد أنّ ملفّ التطبيق الجديد صار على
+     الشبكة — فلا يدور في حلقة تحميل نسخةٍ قديمة. ولا زرّ «لاحقًا»: التحديثُ إلزاميّ.
      ============================================================================ */
   let REG = null, reloading = false;
   const swOK = 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost');
+  const realBuild = () => BUILD.indexOf('__') !== 0;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const UPD = { busy: false, waiting: false };
 
-  function showUpd() {
-    if (S.updLater || $('#upd')) return;
-    const el = document.createElement('div');
-    el.id = 'upd'; el.className = 'upd'; el.setAttribute('role', 'alertdialog');
-    el.innerHTML = `<div class="upd-c">
-      <div class="upd-i">${ic('dl', { s: 26, c: '#fff' })}</div>
-      <div class="upd-t"><b>يتوفّر تحديثٌ جديد للتطبيق</b><span>حدِّث الآن لتحصل على أحدث المزايا والبيانات</span></div>
-      <div class="upd-b"><button class="btn" data-a="do-update">تحديث الآن</button><button class="link" data-a="later">لاحقًا</button></div>
+  function updOverlay(mode, text) {
+    let el = $('#upd');
+    if (!el) {
+      el = document.createElement('div'); el.id = 'upd'; el.className = 'updx'; el.setAttribute('role', 'alertdialog');
+      document.body.appendChild(el); SND.play('update');
+    }
+    el.innerHTML = `<div class="updx-c">
+      <div class="updx-i"><img src="icons/icon-192.png" alt=""><span class="updx-r" aria-hidden="true"></span></div>
+      <b>${mode === 'wait' ? 'تحديثٌ جديد في الطريق' : mode === 'fail' ? 'تعذّر إكمال التحديث' : 'تحديث إلزامي للتطبيق'}</b>
+      <span>${esc(text)}</span>
+      ${mode === 'fail' ? '<button class="btn" data-a="do-update">إعادة المحاولة</button>' : '<div class="updx-bar"><i></i></div>'}
+      <small dir="ltr">v ${esc(BUILD)}</small>
     </div>`;
-    document.body.appendChild(el);
-    SND.play('update');
   }
   const hideUpd = () => { const e = $('#upd'); if (e) e.remove(); };
 
+  /* بياناتٌ أحدث من آخر ما رآه هذا الجهاز — وإصدارٌ أحدث من الذي يعمل */
   function checkVersion() {
     if (!S.meta) return;
-    /* بياناتٌ أحدث من آخر ما رآه هذا الجهاز */
     const last = LS.get('pp.lastAt', null);
     if (S.meta.at && last && S.meta.at > last && !S.freshShown) {
       S.freshShown = true;
       setTimeout(() => { SND.play('fresh'); toast('وصلت بيانات جديدة من المركز'); }, 900);
     }
     if (S.meta.at) LS.set('pp.lastAt', S.meta.at);
-    /* إصدارٌ أحدث من الذي يعمل */
-    if (S.meta.build && BUILD.indexOf('__') !== 0 && S.meta.build !== BUILD) showUpd();
+    if (S.meta.build && realBuild() && S.meta.build !== BUILD) applyUpdate(S.meta.build);
+  }
+
+  async function workerBuild() {
+    const u = mbURL(); if (!u) return null;
+    try { const r = await fetch(u + '/v?_=' + Date.now(), { cache: 'no-store' }); return r.ok ? await r.json() : null; } catch (_) { return null; }
   }
 
   async function checkUpdateNow(manual) {
-    try { if (REG) await REG.update(); } catch (_) {}
-    await loadMeta(true);
-    const newer = (REG && REG.waiting) || (S.meta && S.meta.build && S.meta.build !== BUILD);
-    if (REG && REG.waiting) { S.updLater = false; showUpd(); }
-    else if (newer) { S.updLater = false; showUpd(); }
-    else if (manual) { SND.play('data'); toast('التطبيق على أحدث إصدار'); }
+    if (!realBuild() || UPD.busy || UPD.waiting) return;
+    try { if (REG) REG.update().catch(() => {}); } catch (_) {}
+    let m = null; try { m = await getJSON('data/meta.json'); if (m) S.meta = m; } catch (_) {}
+    if (m && m.build && m.build !== BUILD) return applyUpdate(m.build);
+    const w = await workerBuild();
+    /* الصندوقُ يعرف إصدارًا أحدث لم ينشره GitHub بعد: انتظارٌ ثمّ تحديث */
+    if (w && w.build && w.build !== BUILD && (!m || !m.at || !w.at || w.at > m.at)) return waitForPages(w.build);
+    if (manual) { SND.play('data'); toast('التطبيق على أحدث إصدار'); }
   }
 
-  async function applyUpdate() {
-    const b = $('#upd [data-a="do-update"]');
-    if (b) { b.disabled = true; b.innerHTML = '<span class="spin" aria-hidden="true"></span> جارٍ التحديث…'; }
-    LS.set('pp.justUpdated', true);
-    if (REG && REG.waiting) { REG.waiting.postMessage({ type: 'skip' }); setTimeout(() => location.reload(), 4000); return; }
-    /* لا عاملَ ينتظر (متصفح بلا دعم، أو لم يُكتشف بعد): نُفرغ ذاكرة الواجهة ونعيد التحميل */
-    try { if (REG) await REG.update(); } catch (_) {}
-    if (REG && REG.waiting) { REG.waiting.postMessage({ type: 'skip' }); return; }
+  async function waitForPages(nb) {
+    UPD.waiting = true;
+    updOverlay('wait', 'يُنشر الإصدار الجديد الآن — يبدأ التحديث تلقائيًّا خلال لحظات');
+    const until = Date.now() + 4 * 60e3;
+    while (Date.now() < until) {
+      await sleep(8000);
+      let m = null; try { m = await getJSON('data/meta.json'); } catch (_) {}
+      if (m && m.build && m.build !== BUILD) { S.meta = m; UPD.waiting = false; return applyUpdate(m.build); }
+    }
+    UPD.waiting = false; hideUpd();          // لم يُنشر بعد — يُعاد الفحصُ في الفتح التالي
+  }
+
+  /* ملفُّ التطبيق الجديد صار على الشبكة فعلًا؟ (لا يُعاد التحميل إلى نسخةٍ قديمة) */
+  async function isPublished(nb) {
+    try { const t = await (await fetch(`app.js?v=${encodeURIComponent(nb)}&_=${Date.now()}`, { cache: 'no-store' })).text(); return t.includes(`'${nb}'`); }
+    catch (_) { return false; }
+  }
+  function waitInstalled(w, ms) {
+    return new Promise((res) => { if (!w || w.state === 'installed' || w.state === 'activated') return res();
+      const t = setTimeout(res, ms); w.addEventListener('statechange', () => { if (w.state !== 'installing') { clearTimeout(t); res(); } }); });
+  }
+  async function hardReload(nb) {
     try { const ks = await caches.keys(); await Promise.all(ks.filter((k) => k.startsWith('pp-') && k !== 'pp-data').map((k) => caches.delete(k))); } catch (_) {}
-    location.reload();
+    /* عنوانٌ جديد للصفحة: لا تُقرأ صفحةُ البداية من ذاكرة المتصفح القديمة */
+    location.replace(location.pathname + '?v=' + encodeURIComponent(nb) + location.hash);
+  }
+
+  async function applyUpdate(nb) {
+    if (!realBuild() || UPD.busy) return;
+    nb = nb || (S.meta && S.meta.build);
+    if (!nb || nb === BUILD) return;
+    /* حارسُ الحلقة: إن أُعيد التحميل ثلاثَ مرّاتٍ ولم يتغيّر الإصدار — يتوقّف عشر دقائق */
+    const tr = LS.get('pp.updTry', {});
+    if (tr.nb === nb && tr.n >= 3 && Date.now() - tr.t < 10 * 60e3) return;
+    UPD.busy = true;
+    updOverlay('go', 'يتوفّر إصدارٌ أحدث — جارٍ تنزيله الآن، ولن يستغرق إلا ثوانيَ');
+    let ok = false;
+    for (let i = 0; i < 15 && !ok; i++) { ok = await isPublished(nb); if (!ok) await sleep(6000); }
+    if (!ok) { UPD.busy = false; return updOverlay('fail', 'تأكّد من اتصالك بالإنترنت ثم اضغط «إعادة المحاولة»'); }
+    LS.set('pp.updTry', { nb, n: (tr.nb === nb ? tr.n || 0 : 0) + 1, t: Date.now() });
+    LS.set('pp.justUpdated', true);
+    try {
+      if (REG) {
+        await REG.update().catch(() => {});
+        await waitInstalled(REG.installing, 10000);
+        if (REG.waiting) { REG.waiting.postMessage({ type: 'skip' }); setTimeout(() => hardReload(nb), 4000); return; }
+      }
+    } catch (_) {}
+    hardReload(nb);
   }
 
   if (swOK) {
-    navigator.serviceWorker.register('sw.js').then((reg) => {
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
       REG = reg;
-      if (reg.waiting && navigator.serviceWorker.controller) showUpd();
+      if (reg.waiting && navigator.serviceWorker.controller) checkUpdateNow(false).catch(() => {});
       reg.addEventListener('updatefound', () => {
         const w = reg.installing; if (!w) return;
         w.addEventListener('statechange', () => {
-          if (w.state === 'installed' && navigator.serviceWorker.controller) showUpd();
+          if (w.state === 'installed' && navigator.serviceWorker.controller) checkUpdateNow(false).catch(() => {});
         });
       });
     }).catch(() => {});
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (reloading || !LS.get('pp.justUpdated', false)) return;
-      reloading = true; location.reload();
+      reloading = true; hardReload(LS.get('pp.updTry', {}).nb || BUILD);
     });
   }
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') checkUpdateNow(false).catch(() => {});
   });
+  setInterval(() => { if (document.visibilityState === 'visible') checkUpdateNow(false).catch(() => {}); }, 60000);
+  setTimeout(() => checkUpdateNow(false).catch(() => {}), 2500);
+  /* عاملُ الخدمة يُبلغ: وصل إشعار (والتطبيقُ مفتوح) ⇒ سحبٌ فوريّ بصوت، أو ضُغط إشعارٌ ⇒ فتحُ شاشته */
+  if (swOK) navigator.serviceWorker.addEventListener('message', (e) => {
+    const d = e.data || {};
+    if (d.type === 'push') {
+      mbPoll(true);
+      if (d.update) checkUpdateNow(false).catch(() => {});
+      if (d.news) loadNews(true).then(() => { SND.play('msg'); toast('خبر جديد من المركز'); if (['home', 'news'].includes(route()[0])) render(); }).catch(() => {});
+    }
+    if (d.type === 'open' && d.hash) location.hash = d.hash;
+  });
+  setTimeout(pushRefresh, 3000);
+  const clearBadge = () => { try { if (navigator.clearAppBadge) navigator.clearAppBadge(); } catch (_) {} };
+  clearBadge();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') clearBadge(); });
+
   if (LS.get('pp.justUpdated', false)) {
     LS.del('pp.justUpdated');
+    if (LS.get('pp.updTry', {}).nb === BUILD) LS.del('pp.updTry');
+    /* العنوانُ المؤقّت (?v=) يُعاد إلى أصله */
+    if (/[?&]v=/.test(location.search)) history.replaceState(null, '', location.pathname + location.hash);
     setTimeout(() => { SND.play('update'); toast('تمّ تحديث التطبيق إلى أحدث إصدار'); }, 1200);
   }
 

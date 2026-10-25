@@ -339,3 +339,49 @@ a{color:var(--blue)}
 .upd-b .spin{border-color:rgba(11,31,68,.25);border-top-color:var(--navy)}
 
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition:none !important}}
+
+/* ------------------------------------------------ رسالةُ التثبيت */
+.inst .upd-c{background:#fff;color:var(--ink);border:1px solid var(--line)}
+.inst .upd-i.inst-i{background:var(--navy);overflow:hidden;animation:none;padding:0}
+.inst .upd-i.inst-i img{width:100%;height:100%;object-fit:cover}
+.inst .upd-t span{color:var(--muted)}
+.inst .upd-b .btn{background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:center;gap:8px}
+.inst .upd-b .btn svg{stroke:#fff}
+.inst .upd-b .link{color:var(--blue)}
+.isteps{width:100%;margin:0;padding:10px 30px 10px 12px;background:var(--blue-s);border-radius:14px;font-size:13px;line-height:2;color:var(--ink2)}
+.isteps b{color:var(--navy)}
+.ishare{display:inline-flex;vertical-align:middle;background:#fff;border-radius:7px;padding:1px 4px;border:1px solid #C9DCF8}
+
+/* ------------------------------------------------ تفعيل الإشعارات · المستجدّات */
+.pushcta{display:flex;gap:12px;align-items:flex-start;background:linear-gradient(135deg,#0B1F44,#1658AE);color:#fff;border:0}
+.pushcta .pi{width:46px;height:46px;border-radius:14px;background:rgba(255,255,255,.14);display:flex;align-items:center;justify-content:center;flex:none;
+  animation:updPulse 1.8s ease-in-out infinite}
+.pushcta .px{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
+.pushcta b{font-size:15px;font-weight:800}
+.pushcta span{font-size:12.5px;line-height:1.8;color:#D6E3F8}
+.pushcta .pb{display:flex;gap:10px;align-items:center;margin-top:6px;flex-wrap:wrap}
+.pushcta .btn.sm{height:40px;padding:0 16px;font-size:14px;background:#fff;color:var(--navy);display:inline-flex;align-items:center;gap:6px;width:auto}
+.pushcta .btn.sm svg{stroke:var(--navy)}
+.pushcta .link{color:#A9C4EE}
+.notes h2{display:flex;align-items:center;gap:6px;font-size:15px;margin:0 0 6px}
+.notes .nt{padding:8px 0;border-top:1px solid var(--line2);display:flex;flex-direction:column;gap:2px}
+.notes .nt:first-of-type{border-top:0}
+.notes .nt p{margin:0;font-size:13.5px;line-height:1.8;color:var(--ink)}
+.notes .nt span{font-size:11.5px;color:var(--muted)}
+
+/* ------------------------------------------------ التحديث الإلزامي (يغطّي التطبيق حتى يكتمل) */
+.updx{position:fixed;inset:0;z-index:90;background:rgba(11,31,68,.94);display:flex;align-items:center;justify-content:center;padding:24px;
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);animation:updxIn .3s ease-out}
+@keyframes updxIn{from{opacity:0}to{opacity:1}}
+.updx-c{width:100%;max-width:380px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center;color:#fff}
+.updx-i{position:relative;width:96px;height:96px;margin-bottom:6px}
+.updx-i img{width:96px;height:96px;border-radius:26px;position:relative;z-index:1;box-shadow:0 12px 30px rgba(0,0,0,.35)}
+.updx-r{position:absolute;inset:-10px;border-radius:34px;border:3px solid rgba(111,176,255,.35);border-top-color:#6fb0ff;animation:updxSpin 1s linear infinite}
+@keyframes updxSpin{to{transform:rotate(360deg)}}
+.updx-c b{font-size:21px;font-weight:800}
+.updx-c span{font-size:14.5px;line-height:1.9;color:#C9D7EE}
+.updx-c small{font-size:11px;color:#7f93b8;margin-top:4px}
+.updx-bar{width:100%;max-width:260px;height:6px;border-radius:6px;background:rgba(255,255,255,.15);overflow:hidden;margin-top:6px}
+.updx-bar i{display:block;height:100%;width:40%;border-radius:6px;background:#6fb0ff;animation:updxBar 1.2s ease-in-out infinite}
+@keyframes updxBar{0%{transform:translateX(160%)}100%{transform:translateX(-260%)}}
+.updx .btn{background:#fff;color:var(--navy);height:50px;margin-top:8px;width:100%;max-width:260px}
