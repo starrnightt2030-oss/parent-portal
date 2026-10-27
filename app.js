@@ -8,7 +8,7 @@
    ============================================================================ */
 'use strict';
 (function () {
-  const BUILD = '7abd33315b';
+  const BUILD = '91a5e8ad40';
   const $ = (s, r = document) => r.querySelector(s);
   const app = $('#app');
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -784,7 +784,18 @@
     a: ['غياب', '#FDECEE', '#B3192B'], e: ['هروب', '#F1E8FD', '#6B2FBF'],
     x: ['بإذن', '#FFF4E0', '#9A5B00'], s: ['مرضي', '#E8F1FD', '#1658AE'],
     d: ['إيقاف تأديبي', '#E6EAF2', '#0B1F44'], l: ['فترة فصل', '#EEF2F8', '#39424F'],
+    o: ['عطلة تُحسب في المتصل', '#FFF4E0', '#9A5B00'],
   };
+  /* تفصيلُ أيام الفصل: «٧ أيام غياب + ٢ جمعة + ١ إجازة» */
+  const dcParts = (dc) => [
+    `${daysAr(dc.a)} غياب فعلي`,
+    dc.fri ? `${dc.fri === 1 ? 'جمعة واحدة' : dc.fri === 2 ? 'جمعتان' : `${dc.fri} جُمَع`}` : '',
+    dc.hol ? `${daysAr(dc.hol)} إجازة رسمية` : '',
+    dc.wo ? `${daysAr(dc.wo)} راحة أسبوعية` : '',
+  ].filter(Boolean).join(' + ');
+  const dcLine = (dc) => !dc ? '' : dc.r === 'متصل'
+    ? `${daysAr(dc.n)} غياب متصل${dc.o ? ` (${dcParts(dc)})` : ''}`
+    : `${daysAr(dc.n)} غياب منفصل`;
   const unreadMsgs = (d, kid) => allMsgs(d, kid).filter((m) => m.id > LS.get(`pp.seenMsg.${kid.id}`, 0)).length;
   const ruleTxt = (r) => r === 'متصل' ? 'غياب متصل' : r === 'منفصل' ? 'غياب منفصل' : (r || '');
 
@@ -871,7 +882,7 @@
     let sub = '';
     if (d.st === 'ok') sub = 'لا إنذارات ولا قرارات فصل — استمرّ في متابعته';
     else if (d.st === 'warn') sub = `صدر إنذار${d.sd ? ` بتاريخ ${fDate(d.sd)}` : ''}${d.sr ? ` — ${ruleTxt(d.sr)}` : ''}. تواصل مع شؤون الطلاب`;
-    else if (d.st === 'dismissed') sub = `قرار فصل${d.sd ? ` بتاريخ ${fDate(d.sd)}` : ''} لتجاوز حدّ الغياب — لإعادة القيد راجع شؤون الطلاب`;
+    else if (d.st === 'dismissed') sub = `قرار فصل${d.sd ? ` بتاريخ ${fDate(d.sd)}` : ''} ${d.dc ? `لبلوغ ${dcLine(d.dc)}` : 'لتجاوز حدّ الغياب'} — لإعادة القيد راجع شؤون الطلاب`;
     else sub = 'لمعرفة التفاصيل راجع شؤون الطلاب بالمركز';
     const abs = (c.a || 0) + (c.e || 0);
     const msgs = allMsgs(d, kid);
@@ -911,6 +922,11 @@
           ${c.d ? `<button class="stat" data-go="#/s/abs" data-f="d" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:12px">
             <span class="n" style="color:#0B1F44">${c.d}</span><span style="display:flex;flex-direction:column"><span class="l">أيام إيقاف تأديبي</span><span class="h">تُحتسب غيابًا</span></span></button>` : ''}
         </section>
+        ${d.dc ? `<section class="card prog">
+          <h2>حساب أيام الفصل</h2>
+          <div class="prow"><div class="pl"><span>${d.dc.r === 'متصل' ? 'أيام الغياب المتصل' : 'أيام الغياب المنفصل في الفترة'}</span><b>${d.dc.n} من ${d.dc.lim} ${d.dc.lim >= 3 && d.dc.lim <= 10 ? 'أيام' : 'يومًا'}</b></div>${bar(d.dc.n, d.dc.lim)}</div>
+          ${d.dc.o ? `<div class="phint">${esc(dcParts(d.dc))}${d.dc.f ? ` — من ${esc(fDate(d.dc.f))} إلى ${esc(fDate(d.dc.t))}` : ''}.<br>الجمعة والإجازات التي تقع بين أيام الغياب تُحسب ضمن الغياب المتصل ولا تقطعه، لذلك يزيد العدد هنا عن أيام الغياب الفعلي.</div>` : ''}
+        </section>` : ''}
         ${d.lim ? `<section class="card prog">
           <h2>القرب من حدّ الفصل</h2>
           <div class="prow"><div class="pl"><span>أطول غياب متصل في الفترة الحالية</span><b>${d.lim.cons[0]} من ${d.lim.cons[1]} أيام</b></div>${bar(d.lim.cons[0], d.lim.cons[1], d.lim.wc)}</div>
@@ -936,7 +952,7 @@
     const f = SS.get('pp.absF', 'all');
     const days = d.days || [];
     const present = new Set(days.map((x) => x[1]));
-    const T = [['all', 'الكل'], ['a', 'غياب'], ['e', 'هروب'], ['x', 'بإذن'], ['s', 'مرضي'], ['d', 'إيقاف'], ['l', 'فترة فصل']]
+    const T = [['all', 'الكل'], ['a', 'غياب'], ['e', 'هروب'], ['x', 'بإذن'], ['s', 'مرضي'], ['d', 'إيقاف'], ['o', 'عطلات المتصل'], ['l', 'فترة فصل']]
       .filter(([k]) => k === 'all' || present.has(k) || ['a', 'x', 's'].includes(k));
     const list = days.filter((x) => f === 'all' || x[1] === f);
     const months = [];
@@ -955,7 +971,7 @@
         <div class="chips" role="tablist">${T.map(([k, l]) => `<button class="chip ${f === k ? 'on' : ''}" role="tab" aria-selected="${f === k}" data-af="${k}">${l}</button>`).join('')}</div>
       </header>
       <main class="list" style="flex:1;padding:14px 16px">
-        ${d.st === 'dismissed' ? `<section class="banner red">${ic('ban', { s: 24, c: '#B3192B', w: 2.2 })}<div><b>قرار فصل${d.sd ? ` — ${esc(fDate(d.sd))}` : ''}</b><span>${esc(ruleTxt(d.sr) || 'لتجاوز حدّ الغياب')}</span></div></section>`
+        ${d.st === 'dismissed' ? `<section class="banner red">${ic('ban', { s: 24, c: '#B3192B', w: 2.2 })}<div><b>قرار فصل${d.sd ? ` — ${esc(fDate(d.sd))}` : ''}</b><span>${esc(d.dc ? dcLine(d.dc) : (ruleTxt(d.sr) || 'لتجاوز حدّ الغياب'))}</span></div></section>`
           : w ? `<section class="banner">${ic('alert', { s: 24, c: '#9A5B00', w: 2.2 })}<div><b>إنذار غياب — ${esc(fDate(w.d))}</b><span>${esc([w.n ? `${daysAr(w.n)} غياب` : '', ruleTxt(w.r)].filter(Boolean).join(' · '))}</span></div></section>` : ''}
         ${!list.length ? `<div class="empty"><div class="ei">${ic('ok', { s: 30, c: '#0E7A4C' })}</div>${f === 'all' ? (d.c && d.c.p ? `لا توجد أيام غياب هذا العام — حضر ${d.c.p} ${d.c.p >= 3 && d.c.p <= 10 ? 'أيام' : d.c.p === 1 ? 'يومًا واحدًا' : d.c.p === 2 ? 'يومين' : 'يومًا'} من ${d.c.p} مسجّلًا` : 'لا توجد أيام غياب مسجّلة هذا العام') : 'لا توجد أيام من هذا النوع'}</div>`
           : months.map((g) => `<section class="month"><h2>${esc(g.k)}</h2><div class="days">${g.items.map((x) => {
