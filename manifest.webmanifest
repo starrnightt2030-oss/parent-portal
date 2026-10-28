@@ -4,6 +4,7 @@
   "description": "متابعة انتظام الطالب وغيابه وإنذاراته ورسائل الإدارة، وآخر الأخبار والتعليمات",
   "lang": "ar",
   "dir": "rtl",
+  "id": "./parent-portal-2",
   "start_url": "./?source=pwa",
   "scope": "./",
   "display": "standalone",
