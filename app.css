@@ -385,3 +385,22 @@ a{color:var(--blue)}
 .updx-bar i{display:block;height:100%;width:40%;border-radius:6px;background:#6fb0ff;animation:updxBar 1.2s ease-in-out infinite}
 @keyframes updxBar{0%{transform:translateX(160%)}100%{transform:translateX(-260%)}}
 .updx .btn{background:#fff;color:var(--navy);height:50px;margin-top:8px;width:100%;max-width:260px}
+
+/* تنبيهُ الانضباط المهمّ — نافذةٌ بارزة لا تُغلق إلا بـ«قرأت» */
+.impx{position:fixed;inset:0;z-index:95;background:rgba(80,8,18,.93);display:flex;align-items:center;justify-content:center;padding:22px;animation:impIn .25s ease-out}
+.impx-c{width:100%;max-width:400px;display:flex;flex-direction:column;align-items:center;gap:10px;text-align:center;color:#fff}
+.impx-i{width:84px;height:84px;border-radius:50%;background:#D62839;display:flex;align-items:center;justify-content:center;
+  box-shadow:0 0 0 0 rgba(255,80,96,.7);animation:impPulse 1.2s infinite}
+.impx-c>b{font-size:22px;font-weight:800}
+.impx-n{font-size:14px;opacity:.85}
+.impx-l{width:100%;max-height:46vh;overflow:auto;display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.impx-t{background:#fff;color:#2A0A10;border-radius:14px;padding:12px 14px;text-align:right;border-inline-start:5px solid #D62839}
+.impx-t p{margin:0;font-size:15.5px;line-height:1.75;font-weight:600}
+.impx-t small{display:block;margin-top:4px;color:#7A4049;font-size:12px}
+.impx-ok{margin-top:8px;min-width:200px;background:#fff!important;color:#B3192B!important;font-size:17px;font-weight:800}
+@keyframes impPulse{0%{box-shadow:0 0 0 0 rgba(255,80,96,.7)}70%{box-shadow:0 0 0 22px rgba(255,80,96,0)}100%{box-shadow:0 0 0 0 rgba(255,80,96,0)}}
+@keyframes impIn{from{opacity:0}to{opacity:1}}
+.notes .nt.imp{border-inline-start:4px solid #D62839;background:#FDECEE;border-radius:10px;padding:8px 10px}
+.notes .nt.imp p{color:#8A1422;font-weight:700}
+.howto{margin:6px 0 10px;padding-inline-start:22px;display:flex;flex-direction:column;gap:9px;font-size:14.5px;line-height:1.75;color:#1B2433}
+.howto b{color:#0B1F44}

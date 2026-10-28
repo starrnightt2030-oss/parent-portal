@@ -8,7 +8,7 @@
    ============================================================================ */
 'use strict';
 (function () {
-  const BUILD = '91a5e8ad40';
+  const BUILD = '93d7e1b4eb';
   const $ = (s, r = document) => r.querySelector(s);
   const app = $('#app');
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -44,6 +44,8 @@
       fresh:  { n: [1046.5, 1318.5, 1568], d: 0.1, g: 0.04, t: 'sine' },
       tap:    { n: [1400], d: 0.035, g: 0.018, t: 'sine' },
       error:  { n: [392, 261.63], d: 0.18, g: 0.05, t: 'triangle' },
+      /* تنبيهُ الانضباط: نغمةُ إنذارٍ متناوبة واضحة — تتكرّر حتى «قرأت» */
+      alarm:  { n: [988, 740, 988, 740, 988, 740], d: 0.2, g: 0.09, t: 'square' },
     };
     function play(name) {
       if (!on()) return;
@@ -349,6 +351,8 @@
       await pushSubscribe(true);
       LS.set('pp.push', true);
       SND.play('fresh'); toast('تمّ تفعيل الإشعارات — يصلك الجديد فورًا حتى والتطبيق مغلق');
+      /* أوّلَ مرّة: خطواتُ إظهار الإشعار على الشاشة بصوت — فلا يصل صامتًا في الشريط */
+      if (standalone() && !LS.get('pp.howtoShown', false)) { LS.set('pp.howtoShown', true); setTimeout(pushHowto, 1800); }
       setTimeout(() => pushTest(true), 1500);
     } catch (e) {
       SND.play('error');
@@ -784,18 +788,18 @@
     a: ['غياب', '#FDECEE', '#B3192B'], e: ['هروب', '#F1E8FD', '#6B2FBF'],
     x: ['بإذن', '#FFF4E0', '#9A5B00'], s: ['مرضي', '#E8F1FD', '#1658AE'],
     d: ['إيقاف تأديبي', '#E6EAF2', '#0B1F44'], l: ['فترة فصل', '#EEF2F8', '#39424F'],
-    o: ['عطلة تُحسب في المتصل', '#FFF4E0', '#9A5B00'],
+    o: ['عطلة داخل غياب متصل — تُحسب', '#FDECEE', '#8A1422'], f: ['غياب · يوم الفصل', '#FDECEE', '#B3192B'],
   };
-  /* تفصيلُ أيام الفصل: «٧ أيام غياب + ٢ جمعة + ١ إجازة» */
-  const dcParts = (dc) => [
-    `${daysAr(dc.a)} غياب فعلي`,
-    dc.fri ? `${dc.fri === 1 ? 'جمعة واحدة' : dc.fri === 2 ? 'جمعتان' : `${dc.fri} جُمَع`}` : '',
-    dc.hol ? `${daysAr(dc.hol)} إجازة رسمية` : '',
-    dc.wo ? `${daysAr(dc.wo)} راحة أسبوعية` : '',
-  ].filter(Boolean).join(' + ');
-  const dcLine = (dc) => !dc ? '' : dc.r === 'متصل'
-    ? `${daysAr(dc.n)} غياب متصل${dc.o ? ` (${dcParts(dc)})` : ''}`
-    : `${daysAr(dc.n)} غياب منفصل`;
+  /* الغيابُ المتصل بطول سلسلته: الجمعةُ والإجازةُ داخلها تُحسب فيه، ويومُ الفصل
+     غيابٌ في أصله. فيُضاف ذلك إلى العدد وإلى السجلّ — كما في قرار الفصل والإنذار. */
+  const chainExtra = (d) => { const ch = d && d.ch; if (!ch) return { o: 0, f: 0 };
+    return { o: (ch.o || []).length, f: ch.ld ? 1 : 0 }; };
+  const absDays = (d) => { const c = (d && d.ch && d.days) || (d && d.days) || [];
+    const ch = d && d.ch; if (!ch) return c;
+    const set = new Set(c.map((x) => x[0]));
+    const out = c.map((x) => (ch.ld && x[0] === ch.ld && x[1] === 'l') ? [x[0], 'f'] : x);
+    for (const o of ch.o || []) if (!set.has(o)) out.push([o, 'o']);
+    return out.sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0)); };
   const unreadMsgs = (d, kid) => allMsgs(d, kid).filter((m) => m.id > LS.get(`pp.seenMsg.${kid.id}`, 0)).length;
   const ruleTxt = (r) => r === 'متصل' ? 'غياب متصل' : r === 'منفصل' ? 'غياب منفصل' : (r || '');
 
@@ -831,6 +835,48 @@
   const stFoot = () => `<div class="sync" style="padding-top:4px">${ic('sync', { s: 14 })} آخر تحديث: ${esc((S.meta && fDT(S.meta.at)) || '—')}</div>
     <div style="padding-top:4px">${CREDIT}</div>`;
 
+  /* ============================================================================
+     تنبيهُ الانضباط المهمّ — إنذار · فصل · غياب تأديبي · إيقاف · عقوبة تأديبية
+     ----------------------------------------------------------------------------
+     يصل «تنبيهًا مهمًّا» بعد مزامنة المركز. فإن كان التطبيقُ مفتوحًا (أو فُتح
+     بعده) ظهرت نافذةٌ بارزة بصوت تنبيهٍ متكرّر واهتزاز، لا تُغلق إلا بـ«قرأت»؛
+     ويُحفظ ما قُرئ فلا يتكرّر. ولا يُعرض القديمُ (أقدم من أسبوع) على جهازٍ جديد.
+     ============================================================================ */
+  let IMP = null;
+  function impPending(kid) {
+    if (!kid) return [];
+    const ack = LS.get('pp.impAck.' + kid.id, {}), wk = Date.now() - 7 * 864e5;
+    return Object.entries(mbGet(kid).items)
+      .filter(([id, o]) => o.type === 'note' && o.imp && !ack[id] && (Date.parse(String(o.at || '').replace(' ', 'T')) || Date.now()) > wk)
+      .sort((a, b) => String(a[1].at).localeCompare(String(b[1].at)));
+  }
+  function impCheck() {
+    const kid = currentKid(); if (!kid || IMP) return;
+    const L = impPending(kid); if (!L.length) return;
+    const el = document.createElement('div'); el.id = 'impx'; el.className = 'impx'; el.setAttribute('role', 'alertdialog');
+    el.setAttribute('aria-modal', 'true');
+    el.innerHTML = `<div class="impx-c">
+      <div class="impx-i">${ic('alert', { s: 40, c: '#fff', w: 2.4 })}</div>
+      <b>تنبيه مهم من المركز</b>
+      <span class="impx-n">${esc(kid.name || '')}</span>
+      <div class="impx-l">${L.map(([, o]) => `<div class="impx-t"><p>${esc(o.b)}</p><small>${esc(fDT(o.at))}</small></div>`).join('')}</div>
+      <button class="btn impx-ok" data-a="imp-ok">قرأت</button>
+    </div>`;
+    document.body.appendChild(el);
+    const ring = () => { SND.play('alarm'); try { navigator.vibrate && navigator.vibrate([600, 200, 600, 200, 900]); } catch (_) {} };
+    ring();
+    let n = 0;
+    IMP = { el, ids: L.map(([id]) => id), kid, t: setInterval(() => { if (++n >= 15) clearInterval(IMP.t); ring(); }, 2400) };
+  }
+  function impAck() {
+    if (!IMP) return;
+    clearInterval(IMP.t); try { navigator.vibrate && navigator.vibrate(0); } catch (_) {}
+    const a = LS.get('pp.impAck.' + IMP.kid.id, {}); for (const id of IMP.ids) a[id] = Date.now();
+    LS.set('pp.impAck.' + IMP.kid.id, a);
+    IMP.el.remove(); IMP = null; SND.play('tap');
+    setTimeout(impCheck, 300);
+  }
+
   async function vStudent(tab) {
     const kid = currentKid();
     if (!kid) return go('#/login');
@@ -853,6 +899,7 @@
     }
     const r = route();
     if (r[0] !== 's') return;
+    setTimeout(impCheck, 400);
     if (tab === 'abs') return vAbsence(d, kid);
     if (tab === 'msg' || tab === 'pen') return vNotices(d, kid, tab);
     if (tab === 'c') return r[2] === 'new' ? vCompose(d, kid) : r[2] ? vThread(d, kid, r[2]) : vContact(d, kid);
@@ -881,10 +928,12 @@
     const c = d.c || {};
     let sub = '';
     if (d.st === 'ok') sub = 'لا إنذارات ولا قرارات فصل — استمرّ في متابعته';
-    else if (d.st === 'warn') sub = `صدر إنذار${d.sd ? ` بتاريخ ${fDate(d.sd)}` : ''}${d.sr ? ` — ${ruleTxt(d.sr)}` : ''}. تواصل مع شؤون الطلاب`;
-    else if (d.st === 'dismissed') sub = `قرار فصل${d.sd ? ` بتاريخ ${fDate(d.sd)}` : ''} ${d.dc ? `لبلوغ ${dcLine(d.dc)}` : 'لتجاوز حدّ الغياب'} — لإعادة القيد راجع شؤون الطلاب`;
-    else sub = 'لمعرفة التفاصيل راجع شؤون الطلاب بالمركز';
-    const abs = (c.a || 0) + (c.e || 0);
+    const chn = d.ch && d.ch.n ? ` (${daysAr(d.ch.n)} غياب متصل)` : '';
+    if (d.st === 'warn') sub = `صدر إنذار${d.sd ? ` بتاريخ ${fDate(d.sd)}` : ''}${d.ch && d.ch.k === 'warn' ? chn : d.sr ? ` — ${ruleTxt(d.sr)}` : ''}. تواصل مع شؤون الطلاب`;
+    else if (d.st === 'dismissed') sub = `قرار فصل${d.sd ? ` بتاريخ ${fDate(d.sd)}` : ''}${d.ch && d.ch.k === 'dismiss' ? chn : ' لتجاوز حدّ الغياب'} — لإعادة القيد راجع شؤون الطلاب`;
+    else if (d.st !== 'ok') sub = 'لمعرفة التفاصيل راجع شؤون الطلاب بالمركز';
+    const cx = chainExtra(d);
+    const abs = (c.a || 0) + (c.e || 0) + cx.o + cx.f;
     const msgs = allMsgs(d, kid);
     const u = unreadMsgs(d, kid);
     const bar = (n, lim, warnAt) => {
@@ -903,7 +952,7 @@
         </section>
         ${pushCard()}
         ${c.p != null ? (() => {
-          const rec = (c.p || 0) + abs + (c.x || 0) + (c.s || 0) + (c.d || 0) + (c.l || 0);
+          const rec = (c.p || 0) + (c.a || 0) + (c.e || 0) + (c.x || 0) + (c.s || 0) + (c.d || 0) + (c.l || 0);
           const pct = rec ? Math.round((c.p || 0) / rec * 100) : 0;
           return `<section class="card presence">
             <div class="pi">${ic('ok', { s: 28, c: '#0E7A4C', w: 2.2 })}</div>
@@ -915,18 +964,13 @@
           </section>`; })() : ''}
         <section class="stats">
           <button class="stat" data-go="#/s/abs" data-f="a"><span class="n" style="color:#B3192B">${abs}</span><span class="l">أيام الغياب</span>
-            <span class="h">${c.e ? `منها ${c.e} هروب` : 'بدون إذن'}</span></button>
+            <span class="h">${cx.o ? `منها ${cx.o === 1 ? 'عطلة واحدة' : cx.o === 2 ? 'عطلتان' : cx.o + ' عطلات'} داخل غيابٍ متصل` : c.e ? `منها ${c.e} هروب` : 'بدون إذن'}</span></button>
           <button class="stat" data-go="#/s/abs" data-f="e"><span class="n" style="color:#6B2FBF">${c.e || 0}</span><span class="l">هروب</span><span class="h">يُحسب غيابًا</span></button>
           <button class="stat" data-go="#/s/abs" data-f="x"><span class="n" style="color:#9A5B00">${c.x || 0}</span><span class="l">بإذن</span></button>
           <button class="stat" data-go="#/s/abs" data-f="s"><span class="n" style="color:#1658AE">${c.s || 0}</span><span class="l">مرضي</span></button>
           ${c.d ? `<button class="stat" data-go="#/s/abs" data-f="d" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:12px">
             <span class="n" style="color:#0B1F44">${c.d}</span><span style="display:flex;flex-direction:column"><span class="l">أيام إيقاف تأديبي</span><span class="h">تُحتسب غيابًا</span></span></button>` : ''}
         </section>
-        ${d.dc ? `<section class="card prog">
-          <h2>حساب أيام الفصل</h2>
-          <div class="prow"><div class="pl"><span>${d.dc.r === 'متصل' ? 'أيام الغياب المتصل' : 'أيام الغياب المنفصل في الفترة'}</span><b>${d.dc.n} من ${d.dc.lim} ${d.dc.lim >= 3 && d.dc.lim <= 10 ? 'أيام' : 'يومًا'}</b></div>${bar(d.dc.n, d.dc.lim)}</div>
-          ${d.dc.o ? `<div class="phint">${esc(dcParts(d.dc))}${d.dc.f ? ` — من ${esc(fDate(d.dc.f))} إلى ${esc(fDate(d.dc.t))}` : ''}.<br>الجمعة والإجازات التي تقع بين أيام الغياب تُحسب ضمن الغياب المتصل ولا تقطعه، لذلك يزيد العدد هنا عن أيام الغياب الفعلي.</div>` : ''}
-        </section>` : ''}
         ${d.lim ? `<section class="card prog">
           <h2>القرب من حدّ الفصل</h2>
           <div class="prow"><div class="pl"><span>أطول غياب متصل في الفترة الحالية</span><b>${d.lim.cons[0]} من ${d.lim.cons[1]} أيام</b></div>${bar(d.lim.cons[0], d.lim.cons[1], d.lim.wc)}</div>
@@ -935,7 +979,7 @@
         </section>` : ''}
         ${(() => { const N = allNotes(kid).slice(0, 3); return N.length ? `<section class="card notes">
           <h2>${ic('bell', { s: 18, c: '#1E6FD9' })} آخر المستجدّات</h2>
-          ${N.map((n) => `<div class="nt"><p>${esc(n.b)}</p><span>${esc(fDT(n.at))}</span></div>`).join('')}
+          ${N.map((n) => `<div class="nt${n.imp ? ' imp' : ''}"><p>${n.imp ? '⚠️ ' : ''}${esc(n.b)}</p><span>${esc(fDT(n.at))}</span></div>`).join('')}
         </section>` : ''; })()}
         ${msgs.length ? `<button class="msgcta" data-go="#/s/msg">
           <div class="mi">${ic('chat', { c: '#fff' })}${u ? `<span class="dot">${u}</span>` : ''}</div>
@@ -950,11 +994,12 @@
 
   function vAbsence(d, kid) {
     const f = SS.get('pp.absF', 'all');
-    const days = d.days || [];
+    const days = absDays(d);
     const present = new Set(days.map((x) => x[1]));
-    const T = [['all', 'الكل'], ['a', 'غياب'], ['e', 'هروب'], ['x', 'بإذن'], ['s', 'مرضي'], ['d', 'إيقاف'], ['o', 'عطلات المتصل'], ['l', 'فترة فصل']]
+    const T = [['all', 'الكل'], ['a', 'غياب'], ['e', 'هروب'], ['x', 'بإذن'], ['s', 'مرضي'], ['d', 'إيقاف'], ['l', 'فترة فصل']]
       .filter(([k]) => k === 'all' || present.has(k) || ['a', 'x', 's'].includes(k));
-    const list = days.filter((x) => f === 'all' || x[1] === f);
+    /* «غياب» يضمّ يومَ الفصل والعطلاتِ المحسوبة داخل المتصل */
+    const list = days.filter((x) => f === 'all' || x[1] === f || (f === 'a' && (x[1] === 'o' || x[1] === 'f')));
     const months = [];
     for (const x of list) {
       const p = pd(x[0]); const key = `${MONTHS[p.m - 1]} ${p.y}`;
@@ -971,7 +1016,7 @@
         <div class="chips" role="tablist">${T.map(([k, l]) => `<button class="chip ${f === k ? 'on' : ''}" role="tab" aria-selected="${f === k}" data-af="${k}">${l}</button>`).join('')}</div>
       </header>
       <main class="list" style="flex:1;padding:14px 16px">
-        ${d.st === 'dismissed' ? `<section class="banner red">${ic('ban', { s: 24, c: '#B3192B', w: 2.2 })}<div><b>قرار فصل${d.sd ? ` — ${esc(fDate(d.sd))}` : ''}</b><span>${esc(d.dc ? dcLine(d.dc) : (ruleTxt(d.sr) || 'لتجاوز حدّ الغياب'))}</span></div></section>`
+        ${d.st === 'dismissed' ? `<section class="banner red">${ic('ban', { s: 24, c: '#B3192B', w: 2.2 })}<div><b>قرار فصل${d.sd ? ` — ${esc(fDate(d.sd))}` : ''}</b><span>${esc(d.ch && d.ch.k === 'dismiss' ? `${daysAr(d.ch.n)} غياب — متصل` : ruleTxt(d.sr) || 'لتجاوز حدّ الغياب')}</span></div></section>`
           : w ? `<section class="banner">${ic('alert', { s: 24, c: '#9A5B00', w: 2.2 })}<div><b>إنذار غياب — ${esc(fDate(w.d))}</b><span>${esc([w.n ? `${daysAr(w.n)} غياب` : '', ruleTxt(w.r)].filter(Boolean).join(' · '))}</span></div></section>` : ''}
         ${!list.length ? `<div class="empty"><div class="ei">${ic('ok', { s: 30, c: '#0E7A4C' })}</div>${f === 'all' ? (d.c && d.c.p ? `لا توجد أيام غياب هذا العام — حضر ${d.c.p} ${d.c.p >= 3 && d.c.p <= 10 ? 'أيام' : d.c.p === 1 ? 'يومًا واحدًا' : d.c.p === 2 ? 'يومين' : 'يومًا'} من ${d.c.p} مسجّلًا` : 'لا توجد أيام غياب مسجّلة هذا العام') : 'لا توجد أيام من هذا النوع'}</div>`
           : months.map((g) => `<section class="month"><h2>${esc(g.k)}</h2><div class="days">${g.items.map((x) => {
@@ -1180,6 +1225,7 @@
           : r.fresh.some((x) => x[0] === 'm') ? 'رسالة جديدة من الإدارة' : (o ? o.b : 'مستجدّات جديدة عن ابنك'));
         mbAck(kid, r.fresh.filter((x) => /^[mp]/.test(x)), 'd');
         if (note) ensureData(true).catch(() => {});
+        impCheck();
       }
       /* لا يُعاد رسمُ شاشةٍ يكتب فيها */
       const typing = document.activeElement && /TEXTAREA|INPUT/.test(document.activeElement.tagName) && document.activeElement.value;
@@ -1190,11 +1236,33 @@
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') setTimeout(() => mbPoll(true), 300); });
 
   /* ------------------------------------------------ الإعدادات */
+  /* شكلُ ظهور الإشعار (منبثقٌ على الشاشة · صوت · اهتزاز · على شاشة القفل) يقرّره الهاتف
+     لكلّ تطبيق — ولا يملك تطبيقُ الويب تغييره. فتُشرح الخطواتُ لوليّ الأمر مرّةً واحدة. */
+  function pushHowto() {
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    sheet(`<h2>إظهار الإشعار على الشاشة بصوت واهتزاز</h2>
+      ${ios ? `<ol class="howto">
+        <li>افتح <b>الإعدادات</b> ← <b>الإشعارات</b>.</li>
+        <li>اختر <b>بوابة ولي الأمر</b>.</li>
+        <li>فعّل <b>السماح بالإشعارات</b> و<b>الأصوات</b> و<b>الشارات</b>.</li>
+        <li>من «التنبيهات» اختر <b>شاشة القفل</b> و<b>مركز الإشعارات</b> و<b>الشعارات (Banners)</b>، واجعل نمطها <b>مستمر</b>.</li>
+      </ol>` : `<ol class="howto">
+        <li>اضغط مطوّلًا على أيقونة <b>بوابة ولي الأمر</b> ← <b>معلومات التطبيق</b> (أو: الإعدادات ← التطبيقات ← بوابة ولي الأمر).</li>
+        <li>اختر <b>الإشعارات</b> وتأكّد أنها <b>مفعّلة</b>.</li>
+        <li>اضغط على فئة الإشعارات (مثل «عام» أو «إشعارات المواقع») واختر <b>تنبيه / Alerting</b> لا «صامت».</li>
+        <li>فعّل <b>الظهور على الشاشة (Pop on screen)</b> و<b>الصوت</b> و<b>الاهتزاز</b> و<b>الظهور على شاشة القفل</b>.</li>
+        <li>لو الهاتف فيه «توفير البطارية» للتطبيق اجعله <b>غير مقيّد</b> — ليصل الإشعار فورًا والتطبيقُ مغلق.</li>
+      </ol>`}
+      <div class="note">${ic('info', { s: 20, c: '#1658AE', st: 'margin-top:3px' })}<span>التنبيهاتُ المهمّة (فصل · إنذار · إيقاف · عقوبة) تبقى على الشاشة حتى تفتحها، وباهتزازٍ أطول. والنغمةُ هي نغمةُ إشعارات هاتفك — تغيّرها من إعدادات الصوت فيه.</span></div>
+      <button class="btn" data-a="push-test" style="width:100%;margin-top:10px">${ic('send', { s: 18, c: '#fff' })} جرّب الآن — إرسال إشعار تجريبي</button>`);
+  }
+
   function vSettings() {
     const n = kids().length;
     sheet(`<h2>الإعدادات</h2>
       ${!standalone() ? `<button class="opt" data-a="install">${ic('dl', { c: '#1E6FD9' })}<span>تثبيت التطبيق<small>أضِفه إلى الشاشة الرئيسية ليفتح كتطبيق</small></span></button>` : ''}
       ${mbURL() && (PUSH.ok() || PUSH.needInstall()) ? `<button class="opt" data-a="${PUSH.on() ? 'push-off' : 'push-on'}">${ic(PUSH.on() ? 'bell' : 'mute', { c: '#1E6FD9' })}<span>إشعارات الهاتف: ${PUSH.on() ? 'مفعّلة' : 'متوقّفة'}<small>${PUSH.on() ? 'يصلك ردُّ الإدارة والرسائلُ والمستجدّات والتطبيقُ مغلق — اضغط للإيقاف' : 'اضغط للتفعيل — يصلك الجديد فورًا حتى والتطبيقُ مغلق'}</small></span></button>` : ''}
+      ${PUSH.on() ? `<button class="opt" data-a="push-howto">${ic('info', { c: '#1E6FD9' })}<span>إظهار الإشعار على الشاشة بصوت واهتزاز<small>لو وصل الإشعار صامتًا أو في الشريط فقط — خطوات ضبطه من إعدادات الهاتف</small></span></button>` : ''}
       ${PUSH.on() ? `<button class="opt" data-a="push-test">${ic('send', { c: '#1E6FD9' })}<span>إرسال إشعار تجريبي<small>يصل هذا الجهاز خلال ثوانٍ — للتأكد أن الإشعارات تعمل</small></span></button>` : ''}
       <button class="opt" data-a="sound">${ic(SND.on() ? 'bell' : 'mute', { c: '#1E6FD9' })}<span>أصوات التطبيق: ${SND.on() ? 'تعمل' : 'متوقّفة'}<small>نغمة عند الفتح وعرض البيانات ووصول رسالة أو تحديث</small></span></button>
       <button class="opt" data-a="update">${ic('dl', { c: '#1E6FD9' })}<span>البحث عن تحديث للتطبيق<small>الإصدار الحالي ${esc(BUILD)}</small></span></button>
@@ -1262,6 +1330,7 @@
     if (a === 'push-on') { closeSheet(); return pushEnable(); }
     if (a === 'push-off') { closeSheet(); await pushDisable(); return render(); }
     if (a === 'push-test') { closeSheet(); return pushTest(false); }
+    if (a === 'push-howto') return pushHowto();
     if (a === 'push-no') { LS.set('pp.pushNo', Date.now() + 7 * 864e5); return render(); }
     if (a === 'close') return closeSheet();
     if (a === 'refresh') { closeSheet(); await Promise.all([loadMeta(true), loadNews(true)]); if (S.kid) await ensureData(true).catch(() => {});
@@ -1269,6 +1338,7 @@
     if (a === 'sound') { SND.set(!SND.on()); if (SND.on()) SND.play('data'); return vSettings(); }
     if (a === 'update') { closeSheet(); return checkUpdateNow(true); }
     if (a === 'do-update') return applyUpdate();
+    if (a === 'imp-ok') return impAck();
 
     if (a === 'forget') { if (PUSH.on()) await pushDisable(); LS.set('pp.kids', []); IDB.set('kids', []); closeSheet(); toast('أُزيلت البيانات المحفوظة'); return; }
     if (a === 'send') return doSend();

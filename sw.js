@@ -1,8 +1,8 @@
 /* بوابة ولي الأمر — عامل الخدمة
    الواجهة من الذاكرة أولًا (تفتح بلا إنترنت)، والبيانات من الشبكة أولًا
    (أحدث ما رُفع)، فإن انقطعت الشبكة عُرض آخر ما حُفظ. */
-const V = 'pp-91a5e8ad40';
-const SHELL = ['./', 'index.html', 'app.css?v=91a5e8ad40', 'app.js?v=91a5e8ad40', 'manifest.webmanifest',
+const V = 'pp-93d7e1b4eb';
+const SHELL = ['./', 'index.html', 'app.css?v=93d7e1b4eb', 'app.js?v=93d7e1b4eb', 'manifest.webmanifest',
                'icons/logo.png', 'icons/icon-192.png', 'icons/favicon.png'];
 
 self.addEventListener('install', (e) => {
@@ -99,7 +99,7 @@ async function pullKid(mbox, kid) {
       const o = JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64d(it.iv) }, key, b64d(it.ct))));
       if (o.type === 'post') { out.push({ k: 'c/' + o.tl, t: 'ردّ من الإدارة: ' + clip(o.b, 140) }); acks.push(it.id); }
       else if (o.type === 'msg' && !o.ed) { out.push({ k: 'msg', t: 'رسالة من الإدارة: ' + clip(o.b, 140) }); acks.push(it.id); }
-      else if (o.type === 'note') out.push({ k: 'sum', t: clip(o.b, 160) });
+      else if (o.type === 'note') out.push({ k: 'sum', t: clip(o.b, 160), imp: !!o.imp });
       else if (o.type === 'ticket' && o.status === 'closed') out.push({ k: 'c/' + o.lid, t: `أُغلق طلبك رقم ${o.no || ''}` });
     } catch (_) { /* لا يُفكّ */ }
   }
@@ -144,6 +144,17 @@ async function onPush() {
     requireInteraction: false, data: { hash } });
   const jobs = [];
   for (const { kid, it } of shown) {
+    /* تنبيهُ الانضباط (إنذار · فصل · إيقاف · عقوبة): إشعارٌ بارزٌ مستقلّ يبقى على
+       الشاشة حتى يُفتح، باهتزازٍ طويل — ونغمةُ الإشعار نفسُها نغمةُ الهاتف
+       (لا يملك تطبيقُ الويب تغييرها)؛ وفي التطبيق نافذةٌ بصوت تنبيه حتى «قرأت». */
+    const imp = it.filter((x) => x.imp);
+    if (imp.length) {
+      jobs.push(self.registration.showNotification(`⚠️ تنبيه مهم — ${kid.name ? kid.name.split(' ').slice(0, 2).join(' ') : 'بوابة ولي الأمر'}`,
+        Object.assign(opts(imp.map((x) => x.t).join('\n'), 'pp-imp-' + kid.id, `#/open/${kid.id}/sum`),
+          { requireInteraction: true, vibrate: [600, 200, 600, 200, 900, 300, 900], silent: false })));
+      it.splice(0, it.length, ...it.filter((x) => !x.imp));
+      if (!it.length) continue;
+    }
     const first = it[0];
     const body = it.length === 1 ? first.t : it.slice(0, 3).map((x) => '• ' + x.t).join('\n') + (it.length > 3 ? `\n+ ${it.length - 3} أخرى` : '');
     const tab = first.k.startsWith('c/') ? 'c/' + first.k.slice(2) : first.k;
