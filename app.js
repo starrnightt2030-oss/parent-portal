@@ -8,7 +8,7 @@
    ============================================================================ */
 'use strict';
 (function () {
-  const BUILD = 'e6a67d6bee';
+  const BUILD = 'accaaf1f82';
   const $ = (s, r = document) => r.querySelector(s);
   const app = $('#app');
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -153,6 +153,9 @@
   async function loadNews(force) {
     if (S.news && !force) return S.news;
     try { const j = await getJSON('data/news.json'); S.news = (j && j.items) || []; } catch (_) { S.news = S.news || []; }
+    /* خبرُ القرار الانضباطي يختفي بعد ٥ أيام من نشره — ولو لم تُجرَ مزامنةٌ بعدها */
+    const lim = Date.now() - 5 * 864e5;
+    S.news = S.news.filter((n) => n.k !== 'disc' || !n.at || new Date(String(n.at).replace(' ', 'T')).getTime() >= lim);
     return S.news;
   }
 
@@ -474,7 +477,7 @@
     await Promise.all([loadMeta(), loadNews()]);
     if (route()[0] === 'home') draw();
   }
-  const KIND = { ins: 'تعليمات', news: 'أخبار', dates: 'مواعيد' };
+  const KIND = { ins: 'تعليمات', news: 'أخبار', dates: 'مواعيد', disc: 'قرارات انضباطية' };
   function newsMini(n) {
     return `<button class="news-mini" data-go="#/news/${n.id}">
       <div class="th">${n.img ? `<img src="${esc(n.img)}" alt="" loading="lazy">` : ic('cal', { s: 34, c: '#fff', w: 1.6 })}</div>
@@ -492,7 +495,7 @@
       const list = (all || []).filter((n) => f === 'all' || n.k === f);
       const feat = list.find((n) => n.imp) || list[0];
       const rest = list.filter((n) => n !== feat);
-      const T = [['all', 'الكل'], ['ins', 'تعليمات'], ['news', 'أخبار'], ['dates', 'مواعيد']];
+      const T = [['all', 'الكل'], ['ins', 'تعليمات'], ['news', 'أخبار'], ['dates', 'مواعيد'], ['disc', 'قرارات انضباطية']];
       app.innerHTML = `<section class="screen">
         ${offlineBar()}
         <header class="bar-top">
@@ -792,10 +795,12 @@
   };
   /* الغيابُ المتصل بطول سلسلته: الجمعةُ والإجازةُ داخلها تُحسب فيه، ويومُ الفصل
      غيابٌ في أصله. فيُضاف ذلك إلى العدد وإلى السجلّ — كما في قرار الفصل والإنذار. */
-  const chainExtra = (d) => { const ch = d && d.ch; if (!ch) return { o: 0, f: 0 };
+  /* لمن فُصل فعلًا بغيابٍ متصل وحده — لا تُعرض العطلاتُ غيابًا على من لم يبلغ الحدّ */
+  const chOf = (d) => (d && d.st === 'dismissed' && d.ch && d.ch.k === 'dismiss') ? d.ch : null;
+  const chainExtra = (d) => { const ch = chOf(d); if (!ch) return { o: 0, f: 0 };
     return { o: (ch.o || []).length, f: ch.ld ? 1 : 0 }; };
-  const absDays = (d) => { const c = (d && d.ch && d.days) || (d && d.days) || [];
-    const ch = d && d.ch; if (!ch) return c;
+  const absDays = (d) => { const c = (d && d.days) || [];
+    const ch = chOf(d); if (!ch) return c;
     const set = new Set(c.map((x) => x[0]));
     const out = c.map((x) => (ch.ld && x[0] === ch.ld && x[1] === 'l') ? [x[0], 'f'] : x);
     for (const o of ch.o || []) if (!set.has(o)) out.push([o, 'o']);
@@ -928,9 +933,10 @@
     const c = d.c || {};
     let sub = '';
     if (d.st === 'ok') sub = 'لا إنذارات ولا قرارات فصل — استمرّ في متابعته';
-    const chn = d.ch && d.ch.n ? ` (${daysAr(d.ch.n)} غياب متصل)` : '';
-    if (d.st === 'warn') sub = `صدر إنذار${d.sd ? ` بتاريخ ${fDate(d.sd)}` : ''}${d.ch && d.ch.k === 'warn' ? chn : d.sr ? ` — ${ruleTxt(d.sr)}` : ''}. تواصل مع شؤون الطلاب`;
-    else if (d.st === 'dismissed') sub = `قرار فصل${d.sd ? ` بتاريخ ${fDate(d.sd)}` : ''}${d.ch && d.ch.k === 'dismiss' ? chn : ' لتجاوز حدّ الغياب'} — لإعادة القيد راجع شؤون الطلاب`;
+    const chd = chOf(d);
+    const chn = chd && chd.n ? ` (${daysAr(chd.n)} غياب متصل)` : '';
+    if (d.st === 'warn') sub = `صدر إنذار${d.sd ? ` بتاريخ ${fDate(d.sd)}` : ''}${d.sr ? ` — ${ruleTxt(d.sr)}` : ''}. تواصل مع شؤون الطلاب`;
+    else if (d.st === 'dismissed') sub = `قرار فصل${d.sd ? ` بتاريخ ${fDate(d.sd)}` : ''}${chd ? chn : ' لتجاوز حدّ الغياب'} — لإعادة القيد راجع شؤون الطلاب`;
     else if (d.st !== 'ok') sub = 'لمعرفة التفاصيل راجع شؤون الطلاب بالمركز';
     const cx = chainExtra(d);
     const abs = (c.a || 0) + (c.e || 0) + cx.o + cx.f;
