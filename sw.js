@@ -1,8 +1,8 @@
 /* بوابة ولي الأمر — عامل الخدمة
    الواجهة من الذاكرة أولًا (تفتح بلا إنترنت)، والبيانات من الشبكة أولًا
    (أحدث ما رُفع)، فإن انقطعت الشبكة عُرض آخر ما حُفظ. */
-const V = 'pp-accaaf1f82';
-const SHELL = ['./', 'index.html', 'app.css?v=accaaf1f82', 'app.js?v=accaaf1f82', 'manifest.webmanifest',
+const V = 'pp-47a2601d23';
+const SHELL = ['./', 'index.html', 'app.css?v=47a2601d23', 'app.js?v=47a2601d23', 'manifest.webmanifest',
                'icons/logo.png', 'icons/icon-192.png', 'icons/favicon.png'];
 
 self.addEventListener('install', (e) => {

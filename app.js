@@ -8,7 +8,7 @@
    ============================================================================ */
 'use strict';
 (function () {
-  const BUILD = 'accaaf1f82';
+  const BUILD = '47a2601d23';
   const $ = (s, r = document) => r.querySelector(s);
   const app = $('#app');
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -790,7 +790,7 @@
   const DAY = {
     a: ['غياب', '#FDECEE', '#B3192B'], e: ['هروب', '#F1E8FD', '#6B2FBF'],
     x: ['بإذن', '#FFF4E0', '#9A5B00'], s: ['مرضي', '#E8F1FD', '#1658AE'],
-    d: ['إيقاف تأديبي', '#E6EAF2', '#0B1F44'], l: ['فترة فصل', '#EEF2F8', '#39424F'],
+    d: ['غياب تأديبي', '#FDECEE', '#8A1422'], l: ['فترة فصل', '#EEF2F8', '#39424F'],
     o: ['عطلة داخل غياب متصل — تُحسب', '#FDECEE', '#8A1422'], f: ['غياب · يوم الفصل', '#FDECEE', '#B3192B'],
   };
   /* الغيابُ المتصل بطول سلسلته: الجمعةُ والإجازةُ داخلها تُحسب فيه، ويومُ الفصل
@@ -939,7 +939,8 @@
     else if (d.st === 'dismissed') sub = `قرار فصل${d.sd ? ` بتاريخ ${fDate(d.sd)}` : ''}${chd ? chn : ' لتجاوز حدّ الغياب'} — لإعادة القيد راجع شؤون الطلاب`;
     else if (d.st !== 'ok') sub = 'لمعرفة التفاصيل راجع شؤون الطلاب بالمركز';
     const cx = chainExtra(d);
-    const abs = (c.a || 0) + (c.e || 0) + cx.o + cx.f;
+    /* الغياب التأديبي (أيام الإيقاف) غيابٌ فعليّ يُضاف إلى إجمالي أيام الغياب */
+    const abs = (c.a || 0) + (c.e || 0) + (c.d || 0) + cx.o + cx.f;
     const msgs = allMsgs(d, kid);
     const u = unreadMsgs(d, kid);
     const bar = (n, lim, warnAt) => {
@@ -970,12 +971,12 @@
           </section>`; })() : ''}
         <section class="stats">
           <button class="stat" data-go="#/s/abs" data-f="a"><span class="n" style="color:#B3192B">${abs}</span><span class="l">أيام الغياب</span>
-            <span class="h">${cx.o ? `منها ${cx.o === 1 ? 'عطلة واحدة' : cx.o === 2 ? 'عطلتان' : cx.o + ' عطلات'} داخل غيابٍ متصل` : c.e ? `منها ${c.e} هروب` : 'بدون إذن'}</span></button>
+            <span class="h">${cx.o ? `منها ${cx.o === 1 ? 'عطلة واحدة' : cx.o === 2 ? 'عطلتان' : cx.o + ' عطلات'} داخل غيابٍ متصل` : c.d ? `منها ${c.d} غياب تأديبي` : c.e ? `منها ${c.e} هروب` : 'بدون إذن'}</span></button>
           <button class="stat" data-go="#/s/abs" data-f="e"><span class="n" style="color:#6B2FBF">${c.e || 0}</span><span class="l">هروب</span><span class="h">يُحسب غيابًا</span></button>
           <button class="stat" data-go="#/s/abs" data-f="x"><span class="n" style="color:#9A5B00">${c.x || 0}</span><span class="l">بإذن</span></button>
           <button class="stat" data-go="#/s/abs" data-f="s"><span class="n" style="color:#1658AE">${c.s || 0}</span><span class="l">مرضي</span></button>
           ${c.d ? `<button class="stat" data-go="#/s/abs" data-f="d" style="grid-column:1/-1;flex-direction:row;align-items:center;gap:12px">
-            <span class="n" style="color:#0B1F44">${c.d}</span><span style="display:flex;flex-direction:column"><span class="l">أيام إيقاف تأديبي</span><span class="h">تُحتسب غيابًا</span></span></button>` : ''}
+            <span class="n" style="color:#0B1F44">${c.d}</span><span style="display:flex;flex-direction:column"><span class="l">غياب تأديبي (أيام الإيقاف)</span><span class="h">غياب فعلي يُحتسب</span></span></button>` : ''}
         </section>
         ${d.lim ? `<section class="card prog">
           <h2>القرب من حدّ الفصل</h2>
@@ -1002,10 +1003,11 @@
     const f = SS.get('pp.absF', 'all');
     const days = absDays(d);
     const present = new Set(days.map((x) => x[1]));
-    const T = [['all', 'الكل'], ['a', 'غياب'], ['e', 'هروب'], ['x', 'بإذن'], ['s', 'مرضي'], ['d', 'إيقاف'], ['l', 'فترة فصل']]
+    const T = [['all', 'الكل'], ['a', 'غياب'], ['e', 'هروب'], ['x', 'بإذن'], ['s', 'مرضي'], ['d', 'غياب تأديبي'], ['l', 'فترة فصل']]
       .filter(([k]) => k === 'all' || present.has(k) || ['a', 'x', 's'].includes(k));
-    /* «غياب» يضمّ يومَ الفصل والعطلاتِ المحسوبة داخل المتصل */
-    const list = days.filter((x) => f === 'all' || x[1] === f || (f === 'a' && (x[1] === 'o' || x[1] === 'f')));
+    /* «غياب» يضمّ يومَ الفصل والعطلاتِ المحسوبة داخل المتصل ويومَ الغياب التأديبي */
+    const list = days.filter((x) => f === 'all' || x[1] === f
+      || (f === 'a' && (x[1] === 'o' || x[1] === 'f' || x[1] === 'd')));
     const months = [];
     for (const x of list) {
       const p = pd(x[0]); const key = `${MONTHS[p.m - 1]} ${p.y}`;
